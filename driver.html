@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Chauffeur Zim - Drivers</title>
+<style>body{font-family:sans-serif;padding:16px}input,button{width:100%;padding:12px;margin:6px 0;font-size:16px} .ride{border:2px solid #25D366;padding:12px;border-radius:12px;margin:10px 0}</style>
+</head><body>
+<h2>🚖 My Chauffeur Zim - Driver</h2>
+<input id="name" placeholder="Your Name e.g. Tendai">
+<input id="phone" placeholder="Your Phone e.g. 0771234567">
+<input id="car" placeholder="Car e.g. Toyota Aqua - ABC 1234">
+<button onclick="saveDriver()">Save My Details & Go Online</button>
+<p id="status">Offline</p>
+<h3>Live Requests - Tap BID</h3>
+<div id="rides">Loading rides...</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const supabase = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","PASTE_YOUR_PUBLISHABLE_KEY_HERE");
+let driver = JSON.parse(localStorage.getItem('driver')||'null');
+let myLat=0, myLng=0;
+navigator.geolocation.watchPosition(p=>{myLat=p.coords.latitude; myLng=p.coords.longitude;});
+if(driver){document.getElementById('name').value=driver.name;document.getElementById('phone').value=driver.phone;document.getElementById('car').value=driver.car;document.getElementById('status').innerText="Online as "+driver.name;}
+async function saveDriver(){
+  driver={name:document.getElementById('name').value,phone:document.getElementById('phone').value,car:document.getElementById('car').value};
+  localStorage.setItem('driver',JSON.stringify(driver));
+  document.getElementById('status').innerText="Online as "+driver.name;
+  alert("You are online!");
+}
+async function loadRides(){
+  const {data} = await supabase.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(10);
+  let html="";
+  if(!data||!data.length) html="No waiting rides. Keep this page open, it beeps when one comes.";
+  data.forEach(r=>{
+    html+=`<div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br>City: ${r.city||''} | ${new Date(r.created_at).toLocaleTimeString()}<br>
+    <input id="fee-${r.id}" placeholder="Your Fee $ e.g. 8" type="number">
+    <input id="eta-${r.id}" placeholder="ETA mins e.g. 5" type="number">
+    <button onclick="bid('${r.id}')">BID THIS RIDE</button></div>`;
+  });
+  document.getElementById('rides').innerHTML=html;
+}
+async function bid(rideId){
+  if(!driver) return alert("Save your details first!");
+  const fee=document.getElementById('fee-'+rideId).value;
+  const eta=document.getElementById('eta-'+rideId).value;
+  if(!fee||!eta) return alert("Put fee + ETA");
+  await supabase.from('offers').insert([{ride_id:rideId,driver_name:driver.name,driver_phone:driver.phone,fee:Number(fee),eta_mins:Number(eta),driver_lat:myLat,driver_lng:myLng}]);
+  alert("Bid sent! Rider will see you in the list.");
+}
+setInterval(loadRides,5000); loadRides();
+</script></body></html>
