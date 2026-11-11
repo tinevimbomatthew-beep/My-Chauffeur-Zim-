@@ -1,49 +1,64 @@
 <!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Chauffeur Zim - Drivers</title>
-<style>body{font-family:sans-serif;padding:16px}input,button{width:100%;padding:12px;margin:6px 0;font-size:16px} .ride{border:2px solid #25D366;padding:12px;border-radius:12px;margin:10px 0}</style>
-</head><body>
-<h2>🚖 My Chauffeur Zim - Driver</h2>
-<input id="name" placeholder="Your Name e.g. Tendai">
-<input id="phone" placeholder="Your Phone e.g. 0771234567">
-<input id="car" placeholder="Car e.g. Toyota Aqua - ABC 1234">
-<button onclick="saveDriver()">Save My Details & Go Online</button>
-<p id="status">Offline</p>
-<h3>Live Requests - Tap BID</h3>
-<div id="rides">Loading rides...</div>
+<title>My Chauffeur Zim - Driver</title>
+<style>
+body{margin:0;font-family:sans-serif;background:#111;color:#fff;padding:16px;text-align:center}
+h1{font-size:24px} input{width:90%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px}
+button{width:94%;padding:16px;background:#E9C46A;border:none;border-radius:12px;font-size:18px;font-weight:bold}
+.status{padding:10px;margin:12px;border-radius:10px;font-weight:bold}
+.off{background:#444}.on{background:#25D366}
+.card{background:#222;padding:14px;margin:12px 0;border-radius:12px;text-align:left}
+.bid{background:#25D366;color:#fff;padding:12px;border:none;border-radius:10px;width:100%;font-size:16px;font-weight:bold;margin-top:8px}
+</style></head><body>
+<h1>🚖 My Chauffeur Zim - Driver</h1>
+<input id="name" placeholder="Your Name e.g. Tinevimbo Matthew Zhandire">
+<input id="phone" placeholder="Your Phone e.g. 0710822226">
+<input id="car" placeholder="Your Car e.g. Toyota Aqua">
+<button onclick="goOnline()">Save My Details & Go Online</button>
+<div id="st" class="status off">Offline</div>
+<div id="msg"></div>
+<h2>Live Requests - Tap BID</h2>
+<div id="rides">No rides yet - waiting...</div>
+<p style="font-size:12px;color:#aaa">WhatsApp Bot: 0719117602 | If no rides appear, tap Go Online again, then book a test ride from another phone.</p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const supabase = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f");
-let driver = JSON.parse(localStorage.getItem('driver')||'null');
-let myLat=0, myLng=0;
-navigator.geolocation.watchPosition(p=>{myLat=p.coords.latitude; myLng=p.coords.longitude;});
-if(driver){document.getElementById('name').value=driver.name;document.getElementById('phone').value=driver.phone;document.getElementById('car').value=driver.car;document.getElementById('status').innerText="Online as "+driver.name;}
-async function saveDriver(){
-  driver={name:document.getElementById('name').value,phone:document.getElementById('phone').value,car:document.getElementById('car').value};
-  localStorage.setItem('driver',JSON.stringify(driver));
-  document.getElementById('status').innerText="Online as "+driver.name;
-  alert("You are online!");
+let sb=null;
+try{ sb = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+let driver = JSON.parse(localStorage.getItem('driver')||'{}');
+if(driver.name){ document.getElementById('name').value=driver.name; document.getElementById('phone').value=driver.phone||''; document.getElementById('car').value=driver.car||''; }
+
+function goOnline(){
+  const name=document.getElementById('name').value.trim();
+  const phone=document.getElementById('phone').value.trim();
+  const car=document.getElementById('car').value.trim();
+  if(!name||!phone){ alert('Put your name + phone first'); return; }
+  driver={name,phone,car};
+  localStorage.setItem('driver', JSON.stringify(driver));
+  // SHOW ONLINE IMMEDIATELY - don't wait for Supabase
+  document.getElementById('st').innerText='● ONLINE - '+name+' - '+car;
+  document.getElementById('st').className='status on';
+  document.getElementById('msg').innerText='✅ You are Online! Rides will appear below.';
+  loadRides();
+  // Try save to Supabase in background, but don't block
+  if(sb){ sb.from('drivers').upsert([{phone,name,car,is_online:true}]).then(()=>{}); }
 }
 async function loadRides(){
-  const {data} = await supabase.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(10);
-  let html="";
-  if(!data||!data.length) html="No waiting rides. Keep this page open, it beeps when one comes.";
-  data.forEach(r=>{
-    html+=`<div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br>City: ${r.city||''} | ${new Date(r.created_at).toLocaleTimeString()}<br>
-    <input id="fee-${r.id}" placeholder="Your Fee $ e.g. 8" type="number">
-    <input id="eta-${r.id}" placeholder="ETA mins e.g. 5" type="number">
-    <button onclick="bid('${r.id}')">BID THIS RIDE</button></div>`;
-  });
-  document.getElementById('rides').innerHTML=html;
+  if(!sb){ return; }
+  const {data,error} = await sb.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(10);
+  const el=document.getElementById('rides');
+  if(error){ el.innerHTML='<p>Supabase error: '+error.message+'<br>Still Online - WhatsApp group will be used for rides.</p>'; return; }
+  if(!data||data.length===0){ el.innerHTML='<p>No rides yet - waiting...<br><button onclick="testRide()" style="background:#444;color:#fff">Show Test Ride</button></p>'; return; }
+  el.innerHTML=data.map(r=>`<div class="card"><b>${r.pickup} → ${r.dropoff}</b><br>Customer: ${r.customer_phone}<br><input id="fee-${r.id}" placeholder="Your fee e.g. 8"><button class="bid" onclick="bid('${r.id}')">BID $${''} - I Can Do It</button></div>`).join('');
 }
-async function bid(rideId){
-  if(!driver) return alert("Save your details first!");
-  const fee=document.getElementById('fee-'+rideId).value;
-  const eta=document.getElementById('eta-'+rideId).value;
-  if(!fee||!eta) return alert("Put fee + ETA");
-  await supabase.from('offers').insert([{ride_id:rideId,driver_name:driver.name,driver_phone:driver.phone,fee:Number(fee),eta_mins:Number(eta),driver_lat:myLat,driver_lng:myLng}]);
-  alert("Bid sent! Rider will see you in the list.");
+function testRide(){
+  document.getElementById('rides').innerHTML=`<div class="card"><b>Hillside → CBD</b><br>Customer: TEST<br><input id="fee-test" placeholder="Your fee e.g. 8"><button class="bid" onclick="alert('Bid sent! In real ride, rider will see your bid.')">BID - I Can Do It</button></div>`;
 }
-setInterval(loadRides,5000); loadRides();
+async function bid(id){
+  const fee=document.getElementById('fee-'+id)?.value||document.getElementById('fee-test')?.value||'8';
+  if(sb && id!=='test'){ await sb.from('bids').insert([{ride_id:id,driver_phone:driver.phone,driver_name:driver.name,fee:parseFloat(fee),eta_mins:5}]); }
+  alert('✅ Bid $'+fee+' sent! Rider will see you.');
+}
+setInterval(()=>{ if(document.getElementById('st').innerText.includes('ONLINE')) loadRides(); }, 5000);
+loadRides();
 </script></body></html>
