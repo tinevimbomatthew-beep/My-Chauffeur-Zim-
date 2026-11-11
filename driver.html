@@ -14,7 +14,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const supabase = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","PASTE_YOUR_PUBLISHABLE_KEY_HERE");
+const supabase = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f");
 let driver = JSON.parse(localStorage.getItem('driver')||'null');
 let myLat=0, myLng=0;
 navigator.geolocation.watchPosition(p=>{myLat=p.coords.latitude; myLng=p.coords.longitude;});
