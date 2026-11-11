@@ -1,0 +1,10 @@
+{
+  "name": "my-chauffeur-zim",
+  "main": "bot.js",
+  "scripts": { "start": "node bot.js" },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "@supabase/supabase-js": "latest",
+    "qrcode-terminal": "latest"
+  }
+}
