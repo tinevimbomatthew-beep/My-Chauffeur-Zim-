@@ -8,13 +8,13 @@ body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:cente
 input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
 .btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
 .green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
-.small{font-size:13px;color:#ccc}.price{color:#E9C46A;font-weight:bold}
+.small{font-size:13px;color:#ccc}
 </style></head><body>
 <div class="top">🚖 MY CHAUFFEUR ZIM - BULAWAYO</div>
 <p class="small">Town $8 | Airport $25 | Drivers in 60 sec</p>
 
 <div class="card">
-<h2 style="margin:0">1. Book Here - FREE, Low Data</h2>
+<h2 style="margin:0">Book A Ride</h2>
 <input id="name" placeholder="Your Name">
 <input id="phone" placeholder="Your Phone e.g. 078...">
 <input id="pickup" placeholder="Pickup e.g. Hillside">
@@ -26,11 +26,9 @@ input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none
 </div>
 
 <div class="card">
-<h2 style="margin:0">2. No Data? No Problem.</h2>
-<p>📱 <b>SMS:</b> Send <b>RIDE Hillside to CBD</b> to <b>0783264675</b><br>
-📞 <b>Flash Us:</b> Missed call <b>0783264675</b> - We call you back<br>
-💬 <b>WhatsApp:</b> 0783264675</p>
-<a class="btn green" href="https://wa.me/263783264675?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 Book on WhatsApp - 0783264675</a>
+<h2 style="margin:0">Or Book on WhatsApp</h2>
+<p class="small">Fastest way - Chat to us directly</p>
+<a class="btn green" href="https://wa.me/263783264675?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 WhatsApp Us - 0783264675</a>
 </div>
 
 <div class="card">
@@ -50,7 +48,7 @@ async function bookWeb(){
   const dropoff=document.getElementById('dropoff').value.trim();
   if(!pickup||!dropoff){ alert('Put pickup + dropoff'); return; }
   const msg=`Hi My Chauffeur Zim I want a ride. Name: ${name} Phone: ${phone} From: ${pickup} To: ${dropoff}`;
-  document.getElementById('result').innerHTML=`<p>✅ Ride posted! Drivers will bid. Also sent to WhatsApp.<br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a></p>`;
+  document.getElementById('result').innerHTML=`<p>✅ Ride posted! Drivers will bid.<br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a></p>`;
   if(sb){ try{ await sb.from('rides').insert([{customer_phone:phone||'web',pickup,dropoff,status:'waiting'}]); }catch(e){} }
 }
 </script></body></html>
