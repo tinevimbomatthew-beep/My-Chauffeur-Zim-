@@ -1,71 +1,56 @@
 <!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Chauffeur Zim - WhatsApp Taxi</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Chauffeur Zim - Book a Ride Bulawayo</title>
 <style>
-body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:center}
-.hero{padding:40px 20px;background:linear-gradient(180deg,#000,#1a1a1a)}
-h1{color:#E9C46A;font-size:32px;margin:10px 0}
-p{color:#ddd;line-height:1.6}
-.btn{display:block;background:#25D366;color:#fff;padding:16px;margin:12px 20px;border-radius:12px;font-size:18px;font-weight:bold;text-decoration:none}
-.btn2{display:block;background:#E9C46A;color:#000;padding:16px;margin:12px 20px;border-radius:12px;font-size:18px;font-weight:bold;text-decoration:none}
-.card{background:#222;margin:12px 20px;padding:16px;border-radius:14px;text-align:left}
-input{width:90%;padding:12px;margin:6px 0;border-radius:8px;border:none;font-size:16px}
-.small{font-size:13px;color:#aaa}
-.number{font-size:24px;color:#25D366;font-weight:bold}
+body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:center;padding:0 12px 30px}
+.top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
+.card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
+input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
+.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
+.green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
+.small{font-size:13px;color:#ccc}.price{color:#E9C46A;font-weight:bold}
 </style></head><body>
-
-<div class="hero">
-<div style="font-size:60px">🚖</div>
-<h1>My Chauffeur Zim</h1>
-<p><b>The Taxi That Lives In WhatsApp.</b><br>No app to download. No data needed.<br>Just message, get price, pick your driver in 60 seconds.</p>
-<p class="number">📱 0719117602</p>
-<a class="btn" href="https://wa.me/263719117602?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 Book On WhatsApp Now - 0719117602</a>
-<a class="btn2" href="driver.html">👨‍✈️ I'm A Driver - Go To Driver Site</a>
-<p class="small">Bulawayo • Harare • Gweru • Mutare • Kwekwe • Zimbabwe Yonke</p>
-</div>
+<div class="top">🚖 MY CHAUFFEUR ZIM - BULAWAYO</div>
+<p class="small">Town $8 | Airport $25 | Drivers in 60 sec</p>
 
 <div class="card">
-<h3>How It Works - For Riders</h3>
-<p>1. Save <b>0719117602</b> as My Chauffeur Zim<br>
-2. Type: <b>Hillside to CBD</b><br>
-3. Bot posts to drivers<br>
-4. In 60 seconds you get driver list with fee + mins away<br>
-5. Reply 1, 2 or 3 to pick<br>
-6. Driver calls you</p>
-</div>
-
-<div class="card">
-<h3>🔥 Try A Demo Booking Here</h3>
+<h2 style="margin:0">1. Book Here - FREE, Low Data</h2>
+<input id="name" placeholder="Your Name">
+<input id="phone" placeholder="Your Phone e.g. 078...">
 <input id="pickup" placeholder="Pickup e.g. Hillside">
 <input id="dropoff" placeholder="Dropoff e.g. CBD">
-<a class="btn" href="#" onclick="bookDemo()">Check Drivers On Website</a>
-<p id="demoResult"></p>
+<input id="date" type="date">
+<select id="when"><option>Now</option><option>Later Today</option><option>Tomorrow</option></select>
+<button class="btn gold" onclick="bookWeb()">BOOK RIDE - Find Drivers</button>
+<div id="result"></div>
 </div>
 
 <div class="card">
-<h3>💰 Prices</h3>
-<p>• Drivers set their own fee - you pick cheapest or fastest<br>
-- Town Trip: from $8<br>
-- Airport: from $25<br>
-- No negotiation - what you see is what you pay</p>
+<h2 style="margin:0">2. No Data? No Problem.</h2>
+<p>📱 <b>SMS:</b> Send <b>RIDE Hillside to CBD</b> to <b>0783264675</b><br>
+📞 <b>Flash Us:</b> Missed call <b>0783264675</b> - We call you back<br>
+💬 <b>WhatsApp:</b> 0783264675</p>
+<a class="btn green" href="https://wa.me/263783264675?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 Book on WhatsApp - 0783264675</a>
 </div>
 
 <div class="card">
-<h3>For Drivers</h3>
-<p>Join, go online, bid on rides, get paid.<br>Tap the gold button at the top to open the Driver Website.</p>
+<h2 style="margin:0">For Drivers</h2>
+<a class="btn dark" href="driver.html">I Am A Driver - Go Online</a>
+<p class="small">Drivers: Go Online, see rides, BID. You keep 100% - No commission.</p>
 </div>
-
-<p class="small">My Chauffeur Zim © 2026 • WhatsApp: 0719117602 • Powered by WhatsApp + Supabase</p>
+<p class="small">My Chauffeur Zim • 0783264675 • Bulawayo</p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const supabase = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f");
-async function bookDemo(){
-  const pickup=document.getElementById('pickup').value;
-  const dropoff=document.getElementById('dropoff').value;
-  if(!pickup||!dropoff) return alert("Put pickup + dropoff");
-  const {data} = await supabase.from('rides').insert([{customer_phone:'website',pickup,dropoff,status:'waiting'}]).select().single();
-  document.getElementById('demoResult').innerText = "✅ Posted! Drivers will see: "+pickup+" → "+dropoff+" on their site. Now open WhatsApp to book for real.";
+let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+async function bookWeb(){
+  const name=document.getElementById('name').value.trim();
+  const phone=document.getElementById('phone').value.trim();
+  const pickup=document.getElementById('pickup').value.trim();
+  const dropoff=document.getElementById('dropoff').value.trim();
+  if(!pickup||!dropoff){ alert('Put pickup + dropoff'); return; }
+  const msg=`Hi My Chauffeur Zim I want a ride. Name: ${name} Phone: ${phone} From: ${pickup} To: ${dropoff}`;
+  document.getElementById('result').innerHTML=`<p>✅ Ride posted! Drivers will bid. Also sent to WhatsApp.<br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a></p>`;
+  if(sb){ try{ await sb.from('rides').insert([{customer_phone:phone||'web',pickup,dropoff,status:'waiting'}]); }catch(e){} }
 }
-</script>
-</body></html>Ok 
+</script></body></html>
