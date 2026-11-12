@@ -1,70 +1,72 @@
-<div style="background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold">
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drivers - My Chauffeur Zim</title>
+<style>
+body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:center;padding:0 12px 30px}
+.top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
+.card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
+.trial{background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold;margin:12px auto;max-width:480px}
+input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
+.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
+.green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
+.small{font-size:13px;color:#ccc}.ride{background:#333;padding:12px;border-radius:10px;margin:8px 0}
+</style></head><body>
+<div class="top">🚖 MY CHAUFFEUR ZIM - DRIVERS</div>
+
+<div class="trial">
 🎉 3 DAYS FREE TRIAL<br>
 <span style="font-size:14px;font-weight:normal">Then only $1.50 / day. No commission. You keep 100%.</span><br>
 <span style="font-size:12px">inDrive takes 10% of EVERY ride forever. We take $0.</span>
 </div>
-<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Chauffeur Zim - Driver</title>
-<style>
-body{margin:0;font-family:sans-serif;background:#111;color:#fff;padding:16px;text-align:center}
-h1{font-size:24px} input{width:90%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px}
-button{width:94%;padding:16px;background:#E9C46A;border:none;border-radius:12px;font-size:18px;font-weight:bold}
-.status{padding:10px;margin:12px;border-radius:10px;font-weight:bold}
-.off{background:#444}.on{background:#25D366}
-.card{background:#222;padding:14px;margin:12px 0;border-radius:12px;text-align:left}
-.bid{background:#25D366;color:#fff;padding:12px;border:none;border-radius:10px;width:100%;font-size:16px;font-weight:bold;margin-top:8px}
-</style></head><body>
-<h1>🚖 My Chauffeur Zim - Driver</h1>
-<input id="name" placeholder="Your Name">
-<input id="phone" placeholder="Your Phone e.g. 0710822226">
-<input id="car" placeholder="Your Car e.g. Toyota Aquarius">
-<button onclick="goOnline()">Save My Details & Go Online</button>
-<div id="st" class="status off">Offline</div>
+
+<div class="card">
+<h2 style="margin:0">1. Register Driver</h2>
+<input id="dname" placeholder="Your Name">
+<input id="dphone" placeholder="Your Phone e.g. 078...">
+<input id="dcar" placeholder="Car e.g. Honda Fit - Silver">
+<input id="dplate" placeholder="Plate e.g. AET 1234">
+<input id="dlocation" placeholder="Where are you now? e.g. Hillside">
+<button class="btn gold" onclick="goOnline()">GO ONLINE - Start 3 Days Free</button>
 <div id="msg"></div>
-<h2>Live Requests - Tap BID</h2>
-<div id="rides">No rides yet - waiting...</div>
-<p style="font-size:12px;color:#aaa">WhatsApp Bot: 0719117602 | Rides come from WhatsApp group + Website</p>
+<p class="small">Example: 10 rides x $8 = $80. inDrive takes $8. We take $0. You pay only $1.50/day after trial.</p>
+</div>
+
+<div class="card">
+<h2 style="margin:0">2. Live Rides - BID Now</h2>
+<button class="btn dark" onclick="loadRides()">🔄 Refresh Rides</button>
+<div id="rides"><p class="small">Tap Refresh to see rides waiting.</p></div>
+</div>
+
+<div class="card">
+<h2 style="margin:0">Need Help?</h2>
+<a class="btn green" href="https://wa.me/263783264675?text=Hi%20I%20am%20a%20driver%20I%20want%203%20days%20free">📱 WhatsApp Us - 0783264675</a>
+<p class="small">Pay $1.50/day after trial via EcoCash / InnBucks to 0783264675. Send proof on WhatsApp.</p>
+</div>
+
+<p class="small"><a href="index.html" style="color:#E9C46A">← Back to Customer Booking</a></p>
+<p class="small">My Chauffeur Zim • 0783264675 • Bulawayo</p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-let sb=null;
-try{ sb = window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
-let driver = JSON.parse(localStorage.getItem('driver')||'{}');
-if(driver.name){ document.getElementById('name').value=driver.name; document.getElementById('phone').value=driver.phone||''; document.getElementById('car').value=driver.car||''; }
-function goOnline(){
-  const name=document.getElementById('name').value.trim();
-  const phone=document.getElementById('phone').value.trim();
-  const car=document.getElementById('car').value.trim();
-  if(!name||!phone){ alert('Put your name + phone first'); return; }
-  driver={name,phone,car};
-  localStorage.setItem('driver', JSON.stringify(driver));
-  document.getElementById('st').innerText='● ONLINE - '+name+' - '+car;
-  document.getElementById('st').className='status on';
-  document.getElementById('msg').innerText='✅ You are Online! Rides will appear below.';
+let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+async function goOnline(){
+  const name=document.getElementById('dname').value.trim();
+  const phone=document.getElementById('dphone').value.trim();
+  const car=document.getElementById('dcar').value.trim();
+  const plate=document.getElementById('dplate').value.trim();
+  const loc=document.getElementById('dlocation').value.trim();
+  if(!name||!phone){ alert('Put name + phone'); return; }
+  document.getElementById('msg').innerHTML=`<p>✅ Welcome ${name}! Your 3 DAYS FREE started. You are ONLINE in ${loc||'Bulawayo'}.<br>Now BID on rides below.</p>`;
+  if(sb){ try{ await sb.from('drivers').insert([{name,phone,car,plate,location:loc,status:'online'}]); }catch(e){} }
   loadRides();
-  if(sb){ sb.from('drivers').upsert([{phone,name,car,is_online:true}]).then(()=>{}).catch(()=>{}); }
 }
 async function loadRides(){
-  if(!sb){ return; }
-  try{
-    const {data} = await sb.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(10);
-    const el=document.getElementById('rides');
-    if(!data||data.length===0){ el.innerHTML='<p>Waiting for rides...<br><br><button onclick="testRide()" style="background:#444;color:#fff">Show Test Ride</button></p>'; return; }
-    el.innerHTML=data.map(r=>`<div class="card"><b>${r.pickup} → ${r.dropoff}</b><br>Customer: ${r.customer_phone}<br><input id="fee-${r.id}" placeholder="Your fee e.g. 8"><button class="bid" onclick="bid('${r.id}')">BID - I Can Do It</button></div>`).join('');
-  }catch(e){
-    // SILENT - never show Supabase error to driver
-    document.getElementById('rides').innerHTML='<p>Waiting for rides...<br>Check WhatsApp Drivers Group for new rides.<br><br><button onclick="testRide()" style="background:#444;color:#fff">Show Test Ride</button></p>';
-  }
+  if(!sb){ document.getElementById('rides').innerHTML='<p>No rides yet. Check WhatsApp.</p>'; return; }
+  const {data}=await sb.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(20);
+  if(!data||!data.length){ document.getElementById('rides').innerHTML='<p class="small">No waiting rides right now. Keep this page open + check WhatsApp 0783264675.</p>'; return; }
+  document.getElementById('rides').innerHTML=data.map(r=>`
+    <div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br><span class="small">Customer: ${r.customer_phone||''}</span><br><br>
+    <a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('I BID for ride: '+r.pickup+' to '+r.dropoff+' My price $8') }">BID $8 - WhatsApp</a></div>`).join('');
 }
-function testRide(){
-  document.getElementById('rides').innerHTML=`<div class="card"><b>Hillside → CBD</b><br>Customer: TEST<br><input id="fee-test" placeholder="Your fee e.g. 8"><button class="bid" onclick="alert('✅ Bid $'+(document.getElementById('fee-test').value||'8')+' sent!')">BID - I Can Do It</button></div>`;
-}
-async function bid(id){
-  const fee=document.getElementById('fee-'+id)?.value||document.getElementById('fee-test')?.value||'8';
-  try{ if(sb && id!=='test'){ await sb.from('bids').insert([{ride_id:id,driver_phone:driver.phone,driver_name:driver.name,fee:parseFloat(fee),eta_mins:5}]); } }catch(e){}
-  alert('✅ Bid $'+fee+' sent! Rider will see you.');
-}
-setInterval(()=>{ if(document.getElementById('st').innerText.includes('ONLINE')) loadRides(); }, 5000);
 loadRides();
 </script></body></html>
