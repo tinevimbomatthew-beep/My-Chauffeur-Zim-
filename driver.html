@@ -6,10 +6,12 @@ body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:cente
 .top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
 .card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
 .trial{background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold;margin:12px auto;max-width:480px}
-input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
+label{font-size:13px;color:#E9C46A}
+input,select,textarea{width:100%;padding:13px;margin:6px 0 10px;border-radius:10px;border:none;font-size:15px;box-sizing:border-box}
 .btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
 .green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
 .small{font-size:13px;color:#ccc}.ride{background:#333;padding:12px;border-radius:10px;margin:8px 0}
+h3{margin:18px 0 4px;border-bottom:1px solid #444;padding-bottom:6px}
 </style></head><body>
 <div class="top">🚖 MY CHAUFFEUR ZIM - DRIVERS</div>
 
@@ -19,21 +21,60 @@ input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none
 </div>
 
 <div class="card">
-<h2 style="margin:0">1. Register Driver</h2>
-<input id="dname" placeholder="Your Name">
-<input id="dphone" placeholder="Your Phone e.g. 078...">
-<input id="dcar" placeholder="Car e.g. Honda Fit - Silver">
-<input id="dplate" placeholder="Plate e.g. AET 1234">
-<input id="dlocation" placeholder="Where are you now? e.g. Hillside">
-<button class="btn gold" onclick="goOnline()">GO ONLINE - Start 3 Days Free</button>
+<h2 style="margin:0">Driver Signup - Verification</h2>
+<p class="small">Fill all. We verify before you go online. Your details stay private - for security only.</p>
+
+<h3>1. Personal Details</h3>
+<label>Full Name *</label><input id="dname" placeholder="e.g. Tinevimbo Matthew">
+<label>Phone / WhatsApp *</label><input id="dphone" placeholder="078...">
+<label>Date of Birth</label><input id="dob" type="date">
+<label>Home Address / Suburb</label><input id="address" placeholder="e.g. Hillside, Bulawayo">
+<label>Next of Kin Name + Phone (Emergency)</label><input id="kin" placeholder="Name - 07...">
+
+<h3>2. Security - ID & Licence</h3>
+<label>National ID Number *</label><input id="natid" placeholder="e.g. 08-1234567-A-08">
+<label>Driver's Licence Number *</label><input id="licence" placeholder="e.g. 12345AB">
+<label>Licence Expiry Date</label><input id="licenceExp" type="date">
+<label>Do you have a Police Clearance / No Criminal Record?</label>
+<select id="clearance"><option>Yes - I have it</option><option>No - I will apply</option><option>Not sure</option></select>
+<label>Have you ever been in a road accident? If yes, explain</label><textarea id="accident" placeholder="No / Yes - explain..."></textarea>
+
+<h3>3. Vehicle Details</h3>
+<label>Car Make + Model *</label><input id="dcar" placeholder="e.g. Honda Fit">
+<label>Year + Colour</label><input id="dcar2" placeholder="e.g. 2015 - Silver">
+<label>Plate Number *</label><input id="dplate" placeholder="e.g. AET 1234">
+<label>Insurance Expiry</label><input id="insurance" type="date">
+<label>Roadworthy / Fitness Expiry</label><input id="fitness" type="date">
+<label>Car Owner? If not owner, owner's name + phone</label><input id="owner" placeholder="I own it / Owner name - phone">
+
+<h3>4. Work History</h3>
+<label>Which online cab company have you worked with before? *</label>
+<select id="prevCompany">
+<option>None - This is my first</option>
+<option>inDrive</option>
+<option>Bolt</option>
+<option>Uber</option>
+<option>Local Taxi / Rank</option>
+<option>Private Chauffeur / Company Driver</option>
+<option>Other</option>
+</select>
+<label>If Other / Multiple, list them</label><input id="prevOther" placeholder="e.g. inDrive + Bolt">
+<label>How long did you drive for them?</label>
+<select id="prevTime"><option>Less than 6 months</option><option>6 months - 1 year</option><option>1 - 3 years</option><option>3+ years</option></select>
+<label>Why did you leave / Why join us?</label><textarea id="prevWhy" placeholder="e.g. Looking for better pay..."></textarea>
+<label>Where are you now? (To get rides near you)</label><input id="dlocation" placeholder="e.g. Hillside">
+
+<label><input type="checkbox" id="agree" style="width:auto"> I agree my ID / Licence will be checked for passenger safety. I am 21+ with valid licence.</label>
+
+<button class="btn gold" onclick="goOnline()">SUBMIT - Start 3 Days Free</button>
 <div id="msg"></div>
-<p class="small">Example: 10 rides x $8 = $80. You keep $80. You pay only $1.50/day after trial.</p>
+<p class="small">After you submit, WhatsApp us your photos: 1) ID front 2) Licence front 3) Car front + plate 4) Your face. To 0783264675.</p>
 </div>
 
 <div class="card">
-<h2 style="margin:0">2. Live Rides - BID Now</h2>
+<h2 style="margin:0">Live Rides - BID Now</h2>
 <button class="btn dark" onclick="loadRides()">🔄 Refresh Rides</button>
-<div id="rides"><p class="small">Tap Refresh to see rides waiting.</p></div>
+<div id="rides"><p class="small">Submit first, then BID.</p></div>
 </div>
 
 <div class="card">
@@ -51,21 +92,30 @@ let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.s
 async function goOnline(){
   const name=document.getElementById('dname').value.trim();
   const phone=document.getElementById('dphone').value.trim();
+  const natid=document.getElementById('natid').value.trim();
+  const licence=document.getElementById('licence').value.trim();
   const car=document.getElementById('dcar').value.trim();
   const plate=document.getElementById('dplate').value.trim();
-  const loc=document.getElementById('dlocation').value.trim();
-  if(!name||!phone){ alert('Put name + phone'); return; }
-  document.getElementById('msg').innerHTML=`<p>✅ Welcome ${name}! Your 3 DAYS FREE started. You are ONLINE in ${loc||'Bulawayo'}.<br>Now BID on rides below.</p>`;
-  if(sb){ try{ await sb.from('drivers').insert([{name,phone,car,plate,location:loc,status:'online'}]); }catch(e){} }
-  loadRides();
+  if(!name||!phone||!natid||!licence||!car||!plate){ alert('Please fill Name, Phone, National ID, Licence, Car, Plate'); return; }
+  if(!document.getElementById('agree').checked){ alert('Tick the agreement box'); return; }
+  const data={
+    name, phone, dob:document.getElementById('dob').value, address:document.getElementById('address').value,
+    next_of_kin:document.getElementById('kin').value, national_id:natid, licence_no:licence,
+    licence_expiry:document.getElementById('licenceExp').value, clearance:document.getElementById('clearance').value,
+    accident:document.getElementById('accident').value, car, car_detail:document.getElementById('dcar2').value,
+    plate, insurance_expiry:document.getElementById('insurance').value, fitness_expiry:document.getElementById('fitness').value,
+    owner:document.getElementById('owner').value, prev_company:document.getElementById('prevCompany').value,
+    prev_other:document.getElementById('prevOther').value, prev_time:document.getElementById('prevTime').value,
+    prev_why:document.getElementById('prevWhy').value, location:document.getElementById('dlocation').value, status:'pending_verification'
+  };
+  document.getElementById('msg').innerHTML=`<p>✅ Thanks ${name}! Submitted for verification. Your 3 DAYS FREE starts when we approve.<br><br>Now WhatsApp us your ID + Licence + Car photos to <b>0783264675</b><br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('Hi I am driver '+name+' Plate '+plate+' I submitted signup. Here are my ID photos.') }">Send Photos on WhatsApp</a></p>`;
+  if(sb){ try{ await sb.from('drivers').insert([data]); }catch(e){} }
 }
 async function loadRides(){
-  if(!sb){ document.getElementById('rides').innerHTML='<p>No rides yet. Check WhatsApp.</p>'; return; }
+  if(!sb){ return; }
   const {data}=await sb.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(20);
-  if(!data||!data.length){ document.getElementById('rides').innerHTML='<p class="small">No waiting rides right now. Keep this page open + check WhatsApp 0783264675.</p>'; return; }
-  document.getElementById('rides').innerHTML=data.map(r=>`
-    <div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br><span class="small">Customer: ${r.customer_phone||''}</span><br><br>
-    <a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('I BID for ride: '+r.pickup+' to '+r.dropoff+' My price $8') }">BID $8 - WhatsApp</a></div>`).join('');
+  if(!data||!data.length){ document.getElementById('rides').innerHTML='<p class="small">No waiting rides right now.</p>'; return; }
+  document.getElementById('rides').innerHTML=data.map(r=>`<div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br><span class="small">Customer: ${r.customer_phone||''}</span><br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('I BID for ride: '+r.pickup+' to '+r.dropoff+' My price $8')}">BID $8 - WhatsApp</a></div>`).join('');
 }
 loadRides();
 </script></body></html>
