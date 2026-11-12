@@ -1,10 +1,5 @@
 {
   "name": "my-chauffeur-zim",
   "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
-  "dependencies": {
-    "@whiskeysockets/baileys": "latest",
-    "@supabase/supabase-js": "latest",
-    "qrcode-terminal": "latest"
-  }
+  "dependencies": { "whatsapp-web.js": "^1.26.0", "qrcode-terminal": "^0.12.0" }
 }
