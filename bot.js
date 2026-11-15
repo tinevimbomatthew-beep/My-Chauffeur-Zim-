@@ -1,128 +1,104 @@
-require('dotenv').config();
-const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
 
-// --- Supabase ---
+// --- SUPABASE ---
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-// --- WhatsApp Client - Render / Chrome Fix ---
+// --- WHATSAPP CLIENT ---
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
-    ]
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   }
 });
 
-// --- QR Code ---
 client.on('qr', (qr) => {
-  console.log('SCAN THIS QR CODE:');
+  console.log('Scan this QR code:');
   qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-  console.log('✅ My Chauffeur Zim Bot is READY!');
+  console.log('My Chauffeur Zim Bot is ready!');
 });
 
-client.on('auth_failure', (msg) => {
-  console.log('❌ Auth failure:', msg);
-});
-
-client.on('disconnected', (reason) => {
-  console.log('❌ Disconnected:', reason);
-});
-
-// --- Simple booking memory ---
 const userState = {};
 
-// --- Messages ---
+const MAIN_MENU = `👋 *Welcome to My Chauffeur Zim!*\n\n` +
+  `How can we help you today?\n\n` +
+  `Type *1* to Book a Ride 🚖\n` +
+  `Type *2* for Prices 💰\n` +
+  `Type *3* for Support 📞`;
+
 client.on('message', async (msg) => {
   try {
     const from = msg.from;
     const text = msg.body.trim().toLowerCase();
 
-    // Ignore groups and status
-    if (msg.from.includes('@g.us') || msg.from === 'status@broadcast') return;
-
-    // --- START / MENU ---
-    if (['hi', 'hello', 'hey', 'menu', '1'].includes(text) || text === 'start') {
+    // --- RESET / MENU ---
+    if (text === 'hi' || text === 'hello' || text === 'menu') {
       userState[from] = { step: 'menu' };
-      return msg.reply(
-        `🚖 *Welcome to My Chauffeur Zim!*\n\n` +
-        `How can we help you today?\n\n` +
-        `1️⃣ Book a Ride\n` +
-        `2️⃣ Our Prices\n` +
-        `3️⃣ Talk to Support\n\n` +
-        `Reply with 1, 2 or 3`
-      );
+      return msg.reply(MAIN_MENU);
     }
 
-    // --- BOOK A RIDE ---
-    if (text === '1' && userState[from]?.step === 'menu') {
-      userState[from] = { step: 'pickup' };
-      return msg.reply(`📍 Where should we pick you up from?\n\nSend your pickup location (e.g. Avondale, Harare)`);
+    if (!userState[from]) {
+      userState[from] = { step: 'menu' };
+      return msg.reply(MAIN_MENU);
     }
 
-    if (userState[from]?.step === 'pickup') {
-      userState[from].pickup = msg.body.trim();
+    // --- BOOKING FLOW ---
+    if (text === '1' && userState[from].step === 'menu') {
+      userState[from] = { step: 'pickup', booking: {} };
+      return msg.reply(`🚖 *Book a Ride*\n\nWhere should we pick you up from?`);
+    }
+
+    if (userState[from].step === 'pickup') {
+      userState[from].booking.pickup = msg.body;
       userState[from].step = 'dropoff';
-      return msg.reply(`📍 Pickup saved: *${userState[from].pickup}*\n\nWhere are you going to? Send your drop-off location.`);
+      return msg.reply(`Great. Where are you going to?`);
     }
 
-    if (userState[from]?.step === 'dropoff') {
-      userState[from].dropoff = msg.body.trim();
-      userState[from].step = 'date';
-      return msg.reply(`📍 Drop-off saved: *${userState[from].dropoff}*\n\nWhen do you need the ride? (e.g. Today 2pm, Tomorrow 9am)`);
+    if (userState[from].step === 'dropoff') {
+      userState[from].booking.dropoff = msg.body;
+      userState[from].step = 'datetime';
+      return msg.reply(`When do you need the ride? (e.g. Today 2pm / Tomorrow 9am)`);
     }
 
-    if (userState[from]?.step === 'date') {
-      userState[from].date = msg.body.trim();
+    if (userState[from].step === 'datetime') {
+      userState[from].booking.datetime = msg.body;
       userState[from].step = 'name';
-      return msg.reply(`🗓️ Date/Time saved: *${userState[from].date}*\n\nWhat is your full name?`);
+      return msg.reply(`What is your name?`);
     }
 
-    if (userState[from]?.step === 'name') {
-      userState[from].name = msg.body.trim();
-
-      const booking = {
-        phone: from.replace('@c.us', ''),
-        name: userState[from].name,
-        pickup: userState[from].pickup,
-        dropoff: userState[from].dropoff,
-        ride_date: userState[from].date,
-        status: 'pending'
-      };
+    if (userState[from].step === 'name') {
+      userState[from].booking.name = msg.body;
+      userState[from].booking.phone = from;
+      userState[from].booking.status = 'pending';
 
       // Save to Supabase
-      const { error } = await supabase.from('bookings').insert([booking]);
+      const { error } = await supabase
+        .from('bookings')
+        .insert([userState[from].booking]);
 
       if (error) {
         console.log('Supabase error:', error.message);
+        userState[from].step = 'done';
+        return msg.reply(`Thanks ${userState[from].booking.name}! We got your request. We will confirm shortly.\n\nType *hi* to go back to menu`);
       }
 
-      userState[from] = { step: 'done' };
-
+      userState[from].step = 'done';
       return msg.reply(
         `✅ *Booking Received!*\n\n` +
-        `👤 Name: ${booking.name}\n` +
-        `📍 From: ${booking.pickup}\n` +
-        `📍 To: ${booking.dropoff}\n` +
-        `🗓️ When: ${booking.ride_date}\n\n` +
-        `A driver will contact you shortly to confirm price.\n\n` +
-        `Type *hi* to book another ride.`
+        `Name: ${userState[from].booking.name}\n` +
+        `From: ${userState[from].booking.pickup}\n` +
+        `To: ${userState[from].booking.dropoff}\n` +
+        `When: ${userState[from].booking.datetime}\n\n` +
+        `A driver will be assigned soon.\n\n` +
+        `Type *hi* to go back to menu`
       );
     }
 
@@ -144,7 +120,7 @@ client.on('message', async (msg) => {
       return msg.reply(
         `📞 *Support*\n\n` +
         `Call / WhatsApp us on: +263 77 XXX XXXX\n` +
-        `We reply within 5-10 minutes.\n\n` +
+        `We reply within 15-20 seconds.\n\n` +
         `Type *hi* to go back to menu`
       );
     }
