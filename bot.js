@@ -1,4 +1,4 @@
-Zglobal.WebSocket = require('ws');
+global.WebSocket = require('ws');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
