@@ -6,18 +6,27 @@ body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:cente
 .top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
 .card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
 .trial{background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold;margin:12px auto;max-width:480px}
+.slots{background:#111;border:2px solid #E9C46A;padding:12px;border-radius:12px;text-align:center;margin:12px auto;max-width:480px}
+.slots b{font-size:22px;color:#E9C46A}
 label{font-size:13px;color:#E9C46A}
 input,select,textarea{width:100%;padding:13px;margin:6px 0 10px;border-radius:10px;border:none;font-size:15px;box-sizing:border-box}
-.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
+.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box;cursor:pointer}
 .green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
 .small{font-size:13px;color:#ccc}.ride{background:#333;padding:12px;border-radius:10px;margin:8px 0}
+.timer{color:#E9C46A;font-weight:bold}.fee{color:#E9C46A;font-size:13px}
 h3{margin:18px 0 4px;border-bottom:1px solid #444;padding-bottom:6px}
 </style></head><body>
 <div class="top">🚖 MY CHAUFFEUR ZIM - DRIVERS</div>
 
+<div class="slots">
+  DRIVER SLOTS LEFT<br>
+  <b><span id="slotsLeft">Loading...</span> / 300</b><br>
+  <span class="small" id="slotsText">Checking...</span>
+</div>
+
 <div class="trial">
 🎉 3 DAYS FREE TRIAL<br>
-<span style="font-size:14px;font-weight:normal">Then only $1.50 / day. No commission. You keep 100%.</span>
+<span style="font-size:14px;font-weight:normal">Then only $1.50 / day. You keep 100% of every ride + your fee.</span>
 </div>
 
 <div class="card">
@@ -68,11 +77,21 @@ h3{margin:18px 0 4px;border-bottom:1px solid #444;padding-bottom:6px}
 
 <button class="btn gold" onclick="goOnline()">SUBMIT - Start 3 Days Free</button>
 <div id="msg"></div>
-<p class="small">After you submit, WhatsApp us your photos: 1) ID front 2) Licence front 3) Car front + plate 4) Your face. To 0783264675.</p>
 </div>
 
 <div class="card">
-<h2 style="margin:0">Live Rides - BID Now</h2>
+<h2 style="margin:0">Pay $1.50 / Day - After Trial</h2>
+<p class="small">Step 1: Pay via EcoCash to <b>0783264675</b> - $1.50<br>Step 2: Screenshot your EcoCash confirmation<br>Step 3: Send screenshot on WhatsApp below. We verify in 3 minutes and you go LIVE.</p>
+<label>Your Phone (same as signup)</label><input id="payPhone" placeholder="078...">
+<label>EcoCash Transaction Code / Reference *</label><input id="payCode" placeholder="e.g. PP12345678">
+<button class="btn green" onclick="sendPaymentProof()">📸 SEND PAYMENT SCREENSHOT ON WHATSAPP</button>
+<p class="small">You must send the screenshot - we cannot activate you without seeing it. Verification takes up to 3 mins during working hours.</p>
+<div id="payMsg"></div>
+</div>
+
+<div class="card">
+<h2 style="margin:0">Live Rides - BID Now (60 Sec)</h2>
+<p class="small">Price = $1.50 per km. You add $0.50 if under 15km / In-City, $1.00 if 15km+ / Outside City. You keep ALL of the total. First 5 drivers to BID in 60 seconds get sent to customer. Customer picks 1. Only chosen driver gets customer number.</p>
 <button class="btn dark" onclick="loadRides()">🔄 Refresh Rides</button>
 <div id="rides"><p class="small">Submit first, then BID.</p></div>
 </div>
@@ -80,7 +99,6 @@ h3{margin:18px 0 4px;border-bottom:1px solid #444;padding-bottom:6px}
 <div class="card">
 <h2 style="margin:0">Need Help?</h2>
 <a class="btn green" href="https://wa.me/263783264675?text=Hi%20I%20am%20a%20driver%20I%20want%203%20days%20free">📱 WhatsApp Us - 0783264675</a>
-<p class="small">Pay $1.50/day after trial via EcoCash / InnBucks to 0783264675. Send proof on WhatsApp.</p>
 </div>
 
 <p class="small"><a href="index.html" style="color:#E9C46A">← Back to Customer Booking</a></p>
@@ -89,6 +107,35 @@ h3{margin:18px 0 4px;border-bottom:1px solid #444;padding-bottom:6px}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+
+// === FINAL PRICING: $1.50 per km, driver adds fee, keeps ALL ===
+function calcFare(km){
+  km = Number(km) || 0;
+  if(km < 1) km = 1;
+  return (km * 1.50);
+}
+function calcFee(km, rideType){
+  km = Number(km) || 0;
+  let type = (rideType || '').toLowerCase();
+  if(type.includes('outside') || type.includes('out') || type.includes('long') || type.includes('airport') || km >= 15){
+    return 1.00;
+  }
+  return 0.50;
+}
+function calcTotal(km, rideType){
+  return (calcFare(km) + calcFee(km, rideType));
+}
+
+async function loadSlots(){
+  if(!sb) return;
+  const {count} = await sb.from('drivers').select('*', {count:'exact', head:true}).neq('status','rejected');
+  let total = count || 0;
+  let left = 300 - total;
+  if(left < 0) left = 0;
+  document.getElementById('slotsLeft').innerText = left;
+  document.getElementById('slotsText').innerText = total + ' drivers joined. ' + (left===0 ? 'FULL - Join waiting list on WhatsApp' : 'Hurry, slots filling fast!');
+}
+
 async function goOnline(){
   const name=document.getElementById('dname').value.trim();
   const phone=document.getElementById('dphone').value.trim();
@@ -98,6 +145,10 @@ async function goOnline(){
   const plate=document.getElementById('dplate').value.trim();
   if(!name||!phone||!natid||!licence||!car||!plate){ alert('Please fill Name, Phone, National ID, Licence, Car, Plate'); return; }
   if(!document.getElementById('agree').checked){ alert('Tick the agreement box'); return; }
+  if(sb){
+    const {count} = await sb.from('drivers').select('*', {count:'exact', head:true}).neq('status','rejected');
+    if(count >= 300){ alert('Sorry, we are FULL at 300 drivers. WhatsApp us to join waiting list.'); return; }
+  }
   const data={
     name, phone, dob:document.getElementById('dob').value, address:document.getElementById('address').value,
     next_of_kin:document.getElementById('kin').value, national_id:natid, licence_no:licence,
@@ -109,13 +160,61 @@ async function goOnline(){
     prev_why:document.getElementById('prevWhy').value, location:document.getElementById('dlocation').value, status:'pending_verification'
   };
   document.getElementById('msg').innerHTML=`<p>✅ Thanks ${name}! Submitted for verification. Your 3 DAYS FREE starts when we approve.<br><br>Now WhatsApp us your ID + Licence + Car photos to <b>0783264675</b><br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('Hi I am driver '+name+' Plate '+plate+' I submitted signup. Here are my ID photos.') }">Send Photos on WhatsApp</a></p>`;
-  if(sb){ try{ await sb.from('drivers').insert([data]); }catch(e){} }
+  if(sb){ try{ await sb.from('drivers').insert([data]); loadSlots(); }catch(e){} }
 }
+
+function sendPaymentProof(){
+  const phone=document.getElementById('payPhone').value.trim();
+  const code=document.getElementById('payCode').value.trim();
+  if(!phone||!code){ alert('Enter your phone + EcoCash code first'); return; }
+  document.getElementById('payMsg').innerHTML='<p>✅ Now send your screenshot. We verify in 3 mins.</p>';
+  if(sb){ sb.from('payments').insert([{driver_phone:phone, ecocash_code:code, amount:1.50, status:'pending_screenshot'}]).then(()=>{}); }
+  const msg = `Hi! Payment proof for My Chauffeur Zim\nPhone: ${phone}\nEcoCash Code: ${code}\nAmount: $1.50\nI have attached my EcoCash screenshot. Please verify me (3 mins).`;
+  window.open('https://wa.me/263783264675?text='+encodeURIComponent(msg), '_blank');
+}
+
 async function loadRides(){
-  if(!sb){ return; }
+  if(!sb) return;
   const {data}=await sb.from('rides').select('*').eq('status','waiting').order('created_at',{ascending:false}).limit(20);
   if(!data||!data.length){ document.getElementById('rides').innerHTML='<p class="small">No waiting rides right now.</p>'; return; }
-  document.getElementById('rides').innerHTML=data.map(r=>`<div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br><span class="small">Customer: ${r.customer_phone||''}</span><br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent('I BID for ride: '+r.pickup+' to '+r.dropoff+' My price $8')}">BID $8 - WhatsApp</a></div>`).join('');
+  document.getElementById('rides').innerHTML=data.map(r=>{
+    let km = r.km || 0;
+    let rideType = r.ride_type || r.type || r.city || '';
+    let fare = r.price ? Number(r.price) : calcFare(km);
+    let fee = r.driver_fee ? Number(r.driver_fee) : calcFee(km, rideType);
+    let total = (fare + fee).toFixed(2);
+    let created = new Date(r.created_at).getTime();
+    let elapsed = Math.floor((Date.now() - created)/1000);
+    let left = 60 - elapsed;
+    if(left < 0) left = 0;
+    // DO NOT show customer_phone, customer_name
+    let typeLabel = (km >= 15 || String(rideType).toLowerCase().includes('outside')) ? 'Outside City' : 'In-City';
+    return `<div class="ride"><b>${r.pickup} → ${r.dropoff}</b><br><span class="small">Distance: ${km}km • ${typeLabel} • Fare: $${fare.toFixed(2)} + Your Fee $${fee.toFixed(2)}</span><br><span class="fee">Customer Pays Total: $${total} • YOU KEEP ALL $${total}</span><br><span class="timer">⏱️ ${left}s left to BID - First 5 only</span><br><br><button class="btn green" onclick="bidRide('${r.id}','${r.pickup}','${r.dropoff}',${km},'${typeLabel}')" ${left===0?'disabled style="background:#666"':''}>${left===0?'BIDDING CLOSED':'BID NOW - I Want This Ride'}</button><div id="bid-${r.id}" class="small"></div></div>`;
+  }).join('');
 }
+
+async function bidRide(rideId, pickup, dropoff, km, typeLabel){
+  let driverPhone = document.getElementById('dphone').value.trim() || document.getElementById('payPhone').value.trim();
+  if(!driverPhone){ driverPhone = prompt('Enter your driver phone to BID (same as signup):'); if(!driverPhone) return; }
+  if(sb){
+    const {count} = await sb.from('bids').select('*', {count:'exact', head:true}).eq('ride_id', rideId);
+    if(count >= 5){ alert('Sorry, already 5 drivers bid for this ride. Try next ride.'); return; }
+    const {data:ride} = await sb.from('rides').select('*').eq('id', rideId).single();
+    if(ride){
+      let elapsed = (Date.now() - new Date(ride.created_at).getTime())/1000;
+      if(elapsed > 60){ alert('60 seconds expired for this ride.'); return; }
+    }
+    let fee = calcFee(km, typeLabel);
+    let fare = calcFare(km);
+    let total = fare + fee;
+    await sb.from('bids').insert([{ride_id: rideId, driver_phone: driverPhone, driver_fee: fee, ride_price: fare, total_price: total, created_at: new Date().toISOString()}]);
+  }
+  document.getElementById('bid-'+rideId).innerHTML = '✅ BID SENT! If you are in first 5, customer will pick. Wait for WhatsApp from us. Only chosen driver gets customer number.';
+  const msg = `BID for ride: ${pickup} to ${dropoff}\nDriver Phone: ${driverPhone}\nRide ID: ${rideId}\nFare: $${calcFare(km).toFixed(2)} + Fee $${calcFee(km, typeLabel).toFixed(2)} = Total $${calcTotal(km, typeLabel).toFixed(2)} - I keep all`;
+  window.open('https://wa.me/263783264675?text='+encodeURIComponent(msg), '_blank');
+}
+
+loadSlots();
 loadRides();
+setInterval(loadRides, 5000);
 </script></body></html>
