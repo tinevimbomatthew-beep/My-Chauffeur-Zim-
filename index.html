@@ -6,49 +6,188 @@ body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:cente
 .top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
 .card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
 input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
-.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box}
+.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box;cursor:pointer}
 .green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
 .small{font-size:13px;color:#ccc}
+.pricebox{background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold;margin:10px 0}
+.driver{background:#333;padding:12px;border-radius:10px;margin:8px 0}
+.timer{color:#E9C46A;font-weight:bold}
 </style></head><body>
 <div class="top">🚖 MY CHAUFFEUR ZIM - BULAWAYO</div>
-<p class="small">Town $8 | Airport $25 | Drivers in 60 sec</p>
+<p class="small">$1.50 per km + $0.50 / $1.00 driver fee • Drivers in 60 sec • Driver keeps all</p>
 
 <div class="card">
 <h2 style="margin:0">Book A Ride</h2>
+<label class="small">Your Name</label>
 <input id="name" placeholder="Your Name">
+<label class="small">Your Phone</label>
 <input id="phone" placeholder="Your Phone e.g. 078...">
+<label class="small">Pickup</label>
 <input id="pickup" placeholder="Pickup e.g. Hillside">
+<label class="small">Dropoff</label>
 <input id="dropoff" placeholder="Dropoff e.g. CBD">
-<input id="date" type="date">
+<label class="small">Ride Type</label>
+<select id="rideType" onchange="updatePrice()">
+  <option value="In-City">In-City (under 15km)</option>
+  <option value="Outside City">Outside City (15km+)</option>
+</select>
+<label class="small">Distance (km) - If you don't know, put 5</label>
+<input id="km" type="number" value="5" min="1" oninput="updatePrice()">
+<label class="small">When?</label>
 <select id="when"><option>Now</option><option>Later Today</option><option>Tomorrow</option></select>
-<button class="btn gold" onclick="bookWeb()">BOOK RIDE - Find Drivers</button>
+<input id="date" type="date">
+
+<div class="pricebox" id="priceBox">
+  Fare: $7.50 + Fee: $0.50 = Total: $8.00<br>
+  <span style="font-size:13px;font-weight:normal">Driver keeps ALL $8.00</span>
+</div>
+
+<button class="btn gold" onclick="bookWeb()">BOOK RIDE - Find Drivers (60 Sec)</button>
 <div id="result"></div>
+<div id="driversList"></div>
 </div>
 
 <div class="card">
 <h2 style="margin:0">Or Book on WhatsApp</h2>
-<p class="small">Fastest way - Chat to us directly</p>
+<p class="small">Fastest way - Chat to us directly, bot will calculate same price</p>
 <a class="btn green" href="https://wa.me/263783264675?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 WhatsApp Us - 0783264675</a>
 </div>
 
 <div class="card">
 <h2 style="margin:0">For Drivers</h2>
 <a class="btn dark" href="driver.html">I Am A Driver - Go Online</a>
-<p class="small">Drivers: Go Online, see rides, BID. You keep 100% - No commission.</p>
+<p class="small">Drivers: Go Online, see rides, BID. You keep 100% + your fee. No commission.</p>
 </div>
 <p class="small">My Chauffeur Zim • 0783264675 • Bulawayo</p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+
+// === FINAL PRICING: $1.50 per km, driver adds fee, keeps ALL ===
+function calcFare(km){
+  km = Number(km) || 0;
+  if(km < 1) km = 1;
+  return (km * 1.50);
+}
+function calcFee(km, rideType){
+  km = Number(km) || 0;
+  let type = (rideType || '').toLowerCase();
+  if(type.includes('outside') || type.includes('out') || km >= 15) return 1.00;
+  return 0.50;
+}
+function calcTotal(km, rideType){
+  return calcFare(km) + calcFee(km, rideType);
+}
+
+function updatePrice(){
+  let km = Number(document.getElementById('km').value) || 5;
+  let rideType = document.getElementById('rideType').value;
+  let fare = calcFare(km);
+  let fee = calcFee(km, rideType);
+  let total = fare + fee;
+  document.getElementById('priceBox').innerHTML = `Fare: $${fare.toFixed(2)} + Fee: $${fee.toFixed(2)} = Total: $${total.toFixed(2)}<br><span style="font-size:13px;font-weight:normal">Driver keeps ALL $${total.toFixed(2)} • ${km}km • ${rideType}</span>`;
+  return {fare, fee, total};
+}
+
+let currentRideId = null;
+let countdownTimer = null;
+
 async function bookWeb(){
   const name=document.getElementById('name').value.trim();
   const phone=document.getElementById('phone').value.trim();
   const pickup=document.getElementById('pickup').value.trim();
   const dropoff=document.getElementById('dropoff').value.trim();
+  const km = Number(document.getElementById('km').value) || 5;
+  const rideType = document.getElementById('rideType').value;
+  const when = document.getElementById('when').value;
+  const date = document.getElementById('date').value;
   if(!pickup||!dropoff){ alert('Put pickup + dropoff'); return; }
-  const msg=`Hi My Chauffeur Zim I want a ride. Name: ${name} Phone: ${phone} From: ${pickup} To: ${dropoff}`;
-  document.getElementById('result').innerHTML=`<p>✅ Ride posted! Drivers will bid.<br><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a></p>`;
-  if(sb){ try{ await sb.from('rides').insert([{customer_phone:phone||'web',pickup,dropoff,status:'waiting'}]); }catch(e){} }
+  if(!phone){ alert('Put your phone so driver can call you'); return; }
+
+  let {fare, fee, total} = updatePrice();
+
+  document.getElementById('result').innerHTML=`<p>✅ Ride posted! <br>Fare $${fare.toFixed(2)} + Fee $${fee.toFixed(2)} = <b>Total $${total.toFixed(2)}</b><br><br><span class="timer" id="countdown">⏱️ 60s left - Waiting for first 5 drivers to BID...</span></p>`;
+  document.getElementById('driversList').innerHTML = '';
+
+  if(sb){
+    try{
+      const {data} = await sb.from('rides').insert([{
+        customer_name: name,
+        customer_phone: phone,
+        pickup, dropoff, km,
+        ride_type: rideType,
+        price: fare,
+        driver_fee: fee,
+        total_price: total,
+        datetime: date + ' ' + when,
+        city: 'Bulawayo',
+        status: 'waiting'
+      }]).select().single();
+      if(data) currentRideId = data.id;
+    }catch(e){ console.log(e); }
+  }
+
+  // 60 sec countdown
+  let left = 60;
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(()=>{
+    left--;
+    let el = document.getElementById('countdown');
+    if(el) el.innerText = `⏱️ ${left}s left - Waiting for first 5 drivers to BID...`;
+    if(left <= 0){
+      clearInterval(countdownTimer);
+      loadDrivers();
+    }
+  }, 1000);
+
+  // Also check every 5 sec so drivers show as they bid
+  let checkCount = 0;
+  let poll = setInterval(async ()=>{
+    checkCount++;
+    if(checkCount > 12){ clearInterval(poll); return; }
+    await loadDrivers(true);
+  }, 5000);
 }
+
+async function loadDrivers(silent){
+  if(!sb || !currentRideId) return;
+  const {data: bids} = await sb.from('bids').select('*').eq('ride_id', currentRideId).order('created_at',{ascending:true}).limit(5);
+  if(!bids || !bids.length){
+    if(!silent) document.getElementById('driversList').innerHTML = '<p class="small">No drivers bid in 60 seconds. Try again or WhatsApp us.</p>';
+    return;
+  }
+  // Get driver details for each bid
+  let html = `<h3>Top ${bids.length} Drivers - Pick 1</h3>`;
+  for(let i=0;i<bids.length;i++){
+    let b = bids[i];
+    let drvName = 'Driver ' + (i+1);
+    let car = '', plate = '';
+    try{
+      const {data: drv} = await sb.from('drivers').select('name,car,car_detail,plate').eq('phone', b.driver_phone).single();
+      if(drv){ drvName = drv.name; car = drv.car + ' ' + (drv.car_detail||''); plate = drv.plate; }
+    }catch(e){}
+    // DO NOT show driver phone until customer picks
+    html += `<div class="driver"><b>${i+1}. ${drvName}</b><br><span class="small">${car} • Plate: ${plate}</span><br><span class="small">Total: $${Number(b.total_price || b.ride_price || 0).toFixed(2)} - Driver keeps all</span><br><br><button class="btn green" onclick="pickDriver('${b.driver_phone}','${drvName.replace(/'/g,"")}','${car}','${plate}')">PICK THIS DRIVER</button></div>`;
+  }
+  document.getElementById('driversList').innerHTML = html;
+  let el = document.getElementById('countdown');
+  if(el) el.innerText = `✅ ${bids.length} driver(s) bid! Pick 1 below.`;
+}
+
+async function pickDriver(driverPhone, driverName, car, plate){
+  if(!sb || !currentRideId) return;
+  await sb.from('rides').update({ status: 'assigned', chosen_driver: driverPhone }).eq('id', currentRideId);
+  // Notify admin/driver via WhatsApp - we send to admin who forwards number to chosen driver ONLY
+  let pickup = document.getElementById('pickup').value;
+  let dropoff = document.getElementById('dropoff').value;
+  let phone = document.getElementById('phone').value;
+  let name = document.getElementById('name').value;
+  let {total} = updatePrice();
+  let msg = `I picked driver ${driverName} (${plate}) for ride ${pickup} to ${dropoff}. My name: ${name} My phone: ${phone} Total: $${total.toFixed(2)}. Please connect us.`;
+  document.getElementById('driversList').innerHTML = `<p>✅ <b>You picked ${driverName}</b><br>${car} • ${plate}<br>Total to pay driver: $${total.toFixed(2)}<br><br>Driver will call you on ${phone} shortly. We sent your number ONLY to this driver.</p><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a>`;
+  window.open('https://wa.me/263783264675?text='+encodeURIComponent(msg), '_blank');
+}
+
+updatePrice();
 </script></body></html>
