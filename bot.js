@@ -2,9 +2,6 @@ global.WebSocket = require('ws');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const { createClient } = require('@supabase/supabase-js');
 
 // --- SUPABASE ---
 const supabase = createClient(
@@ -43,7 +40,6 @@ client.on('message', async (msg) => {
     const from = msg.from;
     const text = msg.body.trim().toLowerCase();
 
-    // --- RESET / MENU ---
     if (text === 'hi' || text === 'hello' || text === 'menu') {
       userState[from] = { step: 'menu' };
       return msg.reply(MAIN_MENU);
@@ -54,7 +50,6 @@ client.on('message', async (msg) => {
       return msg.reply(MAIN_MENU);
     }
 
-    // --- BOOKING FLOW ---
     if (text === '1' && userState[from].step === 'menu') {
       userState[from] = { step: 'pickup', booking: {} };
       return msg.reply(`🚖 *Book a Ride*\n\nWhere should we pick you up from?`);
@@ -83,7 +78,6 @@ client.on('message', async (msg) => {
       userState[from].booking.phone = from;
       userState[from].booking.status = 'pending';
 
-      // Save to Supabase
       const { error } = await supabase
         .from('bookings')
         .insert([userState[from].booking]);
@@ -106,7 +100,6 @@ client.on('message', async (msg) => {
       );
     }
 
-    // --- PRICES ---
     if (text === '2') {
       return msg.reply(
         `💰 *My Chauffeur Zim Prices*\n\n` +
@@ -119,7 +112,6 @@ client.on('message', async (msg) => {
       );
     }
 
-    // --- SUPPORT ---
     if (text === '3') {
       return msg.reply(
         `📞 *Support*\n\n` +
@@ -129,7 +121,6 @@ client.on('message', async (msg) => {
       );
     }
 
-    // --- FALLBACK ---
     if (!userState[from] || userState[from].step === 'done') {
       return msg.reply(`Hi! 👋 Type *hi* to see the menu.`);
     }
