@@ -1,108 +1,106 @@
 global.WebSocket = require('ws');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-let chromePath = process.env.CHROME_PATH;
-if (!chromePath && fs.existsSync('/usr/bin/chromium')) chromePath = '/usr/bin/chromium';
-if (!chromePath && fs.existsSync('/usr/bin/chromium-browser')) chromePath = '/usr/bin/chromium-browser';
+
 const client = new Client({
   authStrategy: new LocalAuth(),
-  puppeteer: { headless: true, ...(chromePath ? { executablePath: chromePath } : {}), args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-accelerated-2d-canvas','--no-first-run','--no-zygote','--single-process'] }
+  puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
 });
+
 let pairingRequested = false;
-client.on('qr', async (qr) => {
-  console.log('QR event fired - requesting pairing code instead...');
+const users = {};
+
+const WELCOME = `👋 Welcome to My Chauffeur Zim!
+
+How can we help you today?
+
+Type 1 to Book a Ride 🚕
+Type 2 for Prices 💰
+Type 3 for Support 📞`;
+
+const PRICES = `💰 My Chauffeur Zim Prices
+
+$1.00 per kilometer plus $0.50 driver fee making it a total of $1.50
+
+That means your total is $1.50 for every kilometer you travel.
+
+Example:
+10km trip = $15.00
+
+Type 1 to Book a Ride`;
+
+client.on('qr', async () => {
   if (pairingRequested) return;
   pairingRequested = true;
   const phone = process.env.PHONE_NUMBER;
-  console.log('Using phone for pairing:', phone);
-  if (!phone) { console.log('ERROR: PHONE_NUMBER env var is missing in Railway!'); pairingRequested = false; return; }
   try {
-    await new Promise(r => setTimeout(r, 2000));
     const code = await client.requestPairingCode(phone);
-    console.log('====================================');
-    console.log('YOUR PAIRING CODE IS: ' + code);
-    console.log('Go to WhatsApp > Linked devices > Link with phone number');
-    console.log('Enter this code: ' + code);
-    console.log('====================================');
-  } catch (e) { console.log('Pairing code error FULL:', e); pairingRequested = false; }
+    console.log('YOUR PAIRING CODE IS:', code);
+  } catch (err) {
+    console.log('Pairing code error:', err.message);
+    pairingRequested = false;
+  }
 });
-client.on('code', (code) => {
-  console.log('====================================');
-  console.log('YOUR PAIRING CODE IS: ' + code);
-  console.log('====================================');
-});
-client.on('ready', () => { console.log('My Chauffeur Zim Bot is ready!'); });
-client.on('auth_failure', (msg) => { console.log('Auth failed:', msg); });
-client.on('disconnected', (reason) => { console.log('Disconnected:', reason); });
-function calcFare(km){ if(!km || km < 1) km = 1; return km * 1.50; }
-function calcFee(km, rideType){ let type = (rideType || '').toLowerCase(); if(type.includes('outside') || type.includes('airport') || km >= 15) return 1.00; return 0.50; }
-function calcTotal(km, rideType){ return calcFare(km) + calcFee(km, rideType); }
-const userState = {};
-const MAIN_MENU = `👋 *Welcome to My Chauffeur Zim!*\n\nHow can we help you today?\n\nType *1* to Book a Ride 🚖\nType *2* for Prices 💰\nType *3* for Support 📞`;
+
+client.on('ready', () => console.log('My Chauffeur Zim Bot is ready!'));
+client.on('auth_failure', (m) => console.log('Auth failure:', m));
+
 client.on('message', async (msg) => {
   try {
     const from = msg.from;
     const text = msg.body.trim().toLowerCase();
-    const raw = msg.body.trim();
-    if (text === 'hi' || text === 'hello' || text === 'menu') { userState[from] = { step: 'menu' }; return msg.reply(MAIN_MENU); }
-    if (!userState[from]) { userState[from] = { step: 'menu' }; return msg.reply(MAIN_MENU); }
-    if (userState[from].step === 'pick_driver') {
-      let choice = parseInt(raw);
-      let drivers = userState[from].topDrivers || [];
-      if(!choice || choice < 1 || choice > drivers.length){ return msg.reply(`Please type a number 1 to ${drivers.length} to pick your driver.`); }
-      let chosen = drivers[choice-1];
-      await supabase.from('rides').update({ status: 'assigned', chosen_driver: chosen.driver_phone }).eq('id', userState[from].rideId);
-      try {
-        let driverWa = chosen.driver_phone.replace(/[^0-9]/g,'');
-        if(driverWa.startsWith('0')) driverWa = '263' + driverWa.slice(1);
-        await client.sendMessage(driverWa + '@c.us', `🎉 *YOU WERE CHOSEN!*\n\nRide: ${userState[from].booking.pickup} → ${userState[from].booking.dropoff}\nTotal: $${userState[from].total.toFixed(2)} - YOU KEEP ALL\n\nCustomer Name: ${userState[from].booking.name}\nCustomer Number: ${from.replace('@c.us','')}\nCall them now to confirm pickup.`);
-      } catch(e){ console.log('Could not DM driver', e.message); }
-      userState[from].step = 'done';
-      return msg.reply(`✅ *Driver Chosen!*\n\nDriver: ${chosen.driver_name || chosen.driver_phone}\nCar: ${chosen.car || 'Verified Car'}\nPlate: ${chosen.plate || ''}\n\nTotal to pay driver: $${userState[from].total.toFixed(2)}\n(Fare $${userState[from].fare.toFixed(2)} + Fee $${userState[from].fee.toFixed(2)})\n\nDriver will call you now. Type *hi* for menu.`);
+    if (!users[from]) users[from] = { step: 'menu' };
+    const u = users[from];
+
+    if (text === 'hi' || text === 'hello' || text === 'start' || text === 'menu') {
+      u.step = 'menu';
+      return await msg.reply(WELCOME);
     }
-    if (text === '1' && userState[from].step === 'menu') { userState[from] = { step: 'pickup', booking: {} }; return msg.reply(`🚖 *Book a Ride*\n\nWhere should we pick you up from?`); }
-    if (userState[from].step === 'pickup') { userState[from].booking.pickup = raw; userState[from].step = 'dropoff'; return msg.reply(`Great. Where are you going to?`); }
-    if (userState[from].step === 'dropoff') { userState[from].booking.dropoff = raw; userState[from].step = 'ride_type'; return msg.reply(`Is this ride *In-City* or *Outside City*?\n\nType *1* for In-City (under 15km)\nType *2* for Outside City (15km+)`); }
-    if (userState[from].step === 'ride_type') {
-      if(raw === '1') userState[from].booking.ride_type = 'In-City';
-      else if(raw === '2') userState[from].booking.ride_type = 'Outside City';
-      else return msg.reply(`Type *1* for In-City or *2* for Outside City`);
-      userState[from].step = 'km'; return msg.reply(`How many km is it? (If you don't know, type *don't know* and we will estimate 5km)\n\nExample: 7`);
+
+    if (u.step === 'menu') {
+      if (text === '1') {
+        u.step = 'pickup';
+        return await msg.reply('Great! Let\'s book your ride 🚕\n\nWhere should we pick you up? Send your pickup location.');
+      }
+      if (text === '2') {
+        return await msg.reply(PRICES);
+      }
+      if (text === '3') {
+        return await msg.reply('📞 Support\n\nCall / WhatsApp us on 0783 264 675\n\nType 1 to Book a Ride');
+      }
     }
-    if (userState[from].step === 'km') {
-      let km = parseFloat(raw); if(isNaN(km)) km = 5;
-      userState[from].booking.km = km;
-      let fare = calcFare(km); let fee = calcFee(km, userState[from].booking.ride_type); let total = fare + fee;
-      userState[from].fare = fare; userState[from].fee = fee; userState[from].total = total;
-      userState[from].step = 'datetime';
-      return msg.reply(`💰 *Price Estimate*\n\nDistance: ${km}km • ${userState[from].booking.ride_type}\nFare: $${fare.toFixed(2)} ( $1.50 per km )\nDriver Fee: $${fee.toFixed(2)}\n*Total to pay driver: $${total.toFixed(2)}*\nDriver keeps ALL of it.\n\nWhen do you need the ride? (e.g. Today 2pm / Tomorrow 9am)`);
+
+    if (u.step === 'pickup') {
+      u.pickup = msg.body.trim();
+      u.step = 'destination';
+      return await msg.reply(`Pickup: ${u.pickup}\n\nWhere are you going to? Send your destination.`);
     }
-    if (userState[from].step === 'datetime') { userState[from].booking.datetime = raw; userState[from].step = 'name'; return msg.reply(`What is your name?`); }
-    if (userState[from].step === 'name') {
-      userState[from].booking.name = raw;
-      const rideData = { pickup: userState[from].booking.pickup, dropoff: userState[from].booking.dropoff, km: userState[from].booking.km, ride_type: userState[from].booking.ride_type, price: userState[from].fare, driver_fee: userState[from].fee, total_price: userState[from].total, customer_phone: from.replace('@c.us',''), customer_name: userState[from].booking.name, datetime: userState[from].booking.datetime, city: 'Bulawayo', status: 'waiting' };
-      const { data, error } = await supabase.from('rides').insert([rideData]).select().single();
-      if (error) { console.log('Supabase error:', error.message); userState[from].step = 'done'; return msg.reply(`Thanks ${userState[from].booking.name}! We got your request. We will confirm shortly.\n\nType *hi* to go back to menu`); }
-      userState[from].rideId = data.id; userState[from].step = 'waiting_drivers';
-      await msg.reply(`✅ *Booking Received!*\n\nName: ${userState[from].booking.name}\nFrom: ${userState[from].booking.pickup}\nTo: ${userState[from].booking.dropoff}\nWhen: ${userState[from].booking.datetime}\nTotal: $${userState[from].total.toFixed(2)}\n\n⏱️ Finding drivers... waiting 60 seconds for first 5 bids...`);
-      setTimeout(async () => {
-        try {
-          const { data: bids } = await supabase.from('bids').select('*').eq('ride_id', data.id).order('created_at', {ascending:true}).limit(5);
-          if(!bids || bids.length === 0){ await client.sendMessage(from, `😔 No drivers bid in 60 seconds. Trying again... Type *1* to rebook.`); userState[from].step = 'done'; return; }
-          let enriched = [];
-          for(let b of bids){ const { data: drv } = await supabase.from('drivers').select('name,car,car_detail,plate,phone').eq('phone', b.driver_phone).single(); enriched.push({ driver_phone: b.driver_phone, driver_name: drv?.name || 'Driver', car: drv?.car || '', plate: drv?.plate || '', total: userState[from].total }); }
-          userState[from].topDrivers = enriched; userState[from].step = 'pick_driver';
-          let list = enriched.map((d,i) => `*${i+1}.* ${d.driver_name} - ${d.car} ${d.plate}`).join('\n');
-          await client.sendMessage(from, `🚖 *Top ${enriched.length} Drivers Found (60 sec)*\n\n${list}\n\nTotal: $${userState[from].total.toFixed(2)}\n\nType the NUMBER (1-${enriched.length}) to pick your driver.`);
-        } catch(e){ console.log('Bids fetch error', e.message); }
-      }, 60000);
-      return;
+
+    if (u.step === 'destination') {
+      u.destination = msg.body.trim();
+      u.step = 'distance';
+      return await msg.reply(`From: ${u.pickup}\nTo: ${u.destination}\n\nHow many kilometers is the trip? Just send the number, e.g. 10`);
     }
-    if (text === '2') { return msg.reply(`💰 *My Chauffeur Zim Prices - Bulawayo*\n\n• $1.50 per km\n• + $0.50 fee if under 15km / In-City\n• + $1.00 fee if 15km+ / Outside City\n• Driver keeps ALL of total\n\nExample:\n5km In-City: $7.50 + $0.50 = $8.00\n20km Outside: $30.00 + $1.00 = $31.00\n\nType *1* to Book a Ride`); }
-    if (text === '3') { return msg.reply(`📞 *Support*\n\nCall / WhatsApp us on: 0783264675\nWe reply within 3 minutes.\n\nType *hi* to go back to menu`); }
-    if (!userState[from] || userState[from].step === 'done') { return msg.reply(`Hi! 👋 Type *hi* to see the menu.`); }
-  } catch (err) { console.log('Message error:', err.message); }
+
+    if (u.step === 'distance') {
+      const km = parseFloat(text);
+      if (isNaN(km)) return await msg.reply('Please send just the number of kilometers, e.g. 10');
+
+      const total = (km * 1.50).toFixed(2);
+
+      await supabase.from('bookings').insert([{ phone: from, pickup: u.pickup, destination: u.destination, distance_km: km, price: total, status: 'pending' }]);
+
+      u.step = 'menu';
+      return await msg.reply(`✅ Price Estimate\n\nFrom: ${u.pickup}\nTo: ${u.destination}\nDistance: ${km}km\n\nPricing: $1.00 per kilometer plus $0.50 driver fee making it a total of $1.50\n\nYour total: $${total}\n\nReply YES to confirm this booking, or type 1 to start again.`);
+    }
+
+    if (text === 'yes' && u.pickup) {
+      return await msg.reply('✅ Booking confirmed! A driver will contact you shortly.\n\nType 1 for another booking.');
+    }
+
+  } catch (e) { console.log('Message error:', e.message); }
 });
+
 client.initialize();
