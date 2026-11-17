@@ -60,6 +60,8 @@ let codeRequested = false;
 client.on('qr', async () => {
   if (codeRequested) return;
   codeRequested = true;
+  console.log('Waiting 15 sec for WhatsApp to be ready...');
+  await new Promise(r => setTimeout(r, 15000));
   console.log('Pairing for number:', PHONE_NUMBER);
   try {
     const code = await client.requestPairingCode(PHONE_NUMBER, true);
