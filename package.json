@@ -3,16 +3,12 @@
   "version": "1.0.0",
   "description": "My Chauffeur Zim WhatsApp Bot",
   "main": "bot.js",
-  "scripts": {
-    "start": "node bot.js"
-  },
+  "scripts": { "start": "node bot.js" },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.3",
-    "@whiskeysockets/baileys": "^6.7.18",
-    "pino": "^9.3.2",
+    "puppeteer": "^23.0.0",
+    "whatsapp-web.js": "^1.26.0",
     "ws": "^8.17.0"
   },
-  "engines": {
-    "node": "20.x"
-  }
+  "engines": { "node": "20.x" }
 }
