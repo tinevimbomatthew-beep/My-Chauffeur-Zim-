@@ -48,38 +48,30 @@ async function getDistanceKm(pickup, destination, city) {
 }
 
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: 'auth_wweb' }),
+  authStrategy: new LocalAuth({ dataPath: 'auth_wweb2' }),
   puppeteer: {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--disable-gpu']
   }
 });
 
-let pairingInterval = null;
-let pairingStarted = false;
+let codeRequested = false;
 
-// --- PAIRING CODE ONLY - FIXED ---
 client.on('qr', async () => {
-  if (pairingStarted) return;
-  pairingStarted = true;
+  if (codeRequested) return;
+  codeRequested = true;
   console.log('Pairing for number:', PHONE_NUMBER);
-
-  const askCode = async () => {
-    try {
-      const code = await client.requestPairingCode(PHONE_NUMBER, true);
-      console.log('YOUR PAIRING CODE IS:', code);
-      console.log('This code expires in 60 seconds');
-    } catch (e) {
-      console.log('Pairing error:', e.message);
-    }
-  };
-
-  await askCode();
-  pairingInterval = setInterval(askCode, 60000);
+  try {
+    const code = await client.requestPairingCode(PHONE_NUMBER, true);
+    console.log('YOUR PAIRING CODE IS:', code);
+    console.log('ENTER THIS CODE NOW - DO NOT WAIT FOR ANOTHER CODE');
+  } catch (e) {
+    console.log('Pairing error FULL:', e);
+    codeRequested = false;
+  }
 });
 
 client.on('ready', () => {
-  if (pairingInterval) clearInterval(pairingInterval);
   console.log('My Chauffeur Zim Bot is ready!');
 });
 
