@@ -1,10 +1,9 @@
 global.WebSocket = require('ws');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const { createClient } = require('@supabase/supabase-js');
-const pino = require('pino');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-const OWNER_NUMBER = process.env.OWNER_NUMBER;
+const OWNER_NUMBER = String(process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '');
 const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
 
 const users = {};
@@ -48,151 +47,136 @@ async function getDistanceKm(pickup, destination, city) {
   } catch (e) { console.log('Distance calc error:', e.message); return null; }
 }
 
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth');
-  const sock = makeWASocket({
-    auth: state,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: false,
-    browser: ['My Chauffeur Zim', 'Chrome', '1.0']
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-
-  let pairingInterval = null;
-
-  // --- PAIRING CODE - New code every 60 seconds ---
-  if (!sock.authState.creds.registered) {
-    console.log('Pairing for number:', PHONE_NUMBER);
-    console.log('Use this SAME number on your phone:', PHONE_NUMBER);
-
-    const askCode = async () => {
-      try {
-        const code = await sock.requestPairingCode(PHONE_NUMBER);
-        console.log('YOUR PAIRING CODE IS:', code);
-        console.log('This code expires in 60 seconds - new code coming in 60 sec');
-      } catch (e) {
-        console.log('Pairing error:', e.message);
-      }
-    };
-
-    setTimeout(askCode, 3000);
-    pairingInterval = setInterval(askCode, 60000);
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: 'auth_wweb' }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu'
+    ]
   }
+});
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'close') {
-      if (pairingInterval) clearInterval(pairingInterval);
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed, reconnecting:', shouldReconnect);
-      if (shouldReconnect) startBot();
-    } else if (connection === 'open') {
-      if (pairingInterval) clearInterval(pairingInterval);
-      console.log('My Chauffeur Zim Bot is ready!');
+// --- PAIRING CODE ONLY - New code every 60 seconds ---
+let pairingInterval = null;
+
+client.on('qr', (qr) => {
+  console.log('Ignoring QR - using pairing code only');
+});
+
+client.on('code', async (code) => {
+  console.log('YOUR PAIRING CODE IS:', code);
+  console.log('This code expires in 60 seconds');
+  console.log('Pairing for number:', PHONE_NUMBER);
+});
+
+client.on('ready', () => {
+  if (pairingInterval) clearInterval(pairingInterval);
+  console.log('My Chauffeur Zim Bot is ready!');
+});
+
+client.on('auth_failure', (msg) => {
+  console.log('Auth failure:', msg);
+});
+
+client.on('disconnected', (reason) => {
+  console.log('Disconnected:', reason);
+});
+
+// Request pairing code when client starts
+client.on('loading_screen', async () => {
+  try {
+    if (!pairingInterval) {
+      const askCode = async () => {
+        try {
+          const code = await client.requestPairingCode(PHONE_NUMBER, true);
+          console.log('YOUR PAIRING CODE IS:', code);
+          console.log('This code expires in 60 seconds');
+        } catch (e) { console.log('Pairing error:', e.message); }
+      };
+      setTimeout(askCode, 5000);
+      pairingInterval = setInterval(askCode, 60000);
     }
-  });
+  } catch (e) { console.log('Loading error:', e.message); }
+});
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg.message || msg.key.fromMe) return;
-    const from = msg.key.remoteJid;
-    const body = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+client.on('message', async (msg) => {
+  try {
+    if (msg.fromMe) return;
+    const from = msg.from;
+    const body = msg.body || '';
     const text = body.trim().toLowerCase();
 
-    const reply = async (txt) => {
-      await sock.sendMessage(from, { text: txt });
-    };
+    const reply = async (txt) => { await msg.reply(txt); };
 
-    try {
-      if (!users[from]) users[from] = { step: 'menu' };
-      const u = users[from];
+    if (!users[from]) users[from] = { step: 'menu' };
+    const u = users[from];
 
-      if (text === 'hi' || text === 'hello' || text === 'start' || text === 'menu') {
-        u.step = 'menu';
-        return await reply(WELCOME);
+    if (text === 'hi' || text === 'hello' || text === 'start' || text === 'menu') {
+      u.step = 'menu';
+      return await reply(WELCOME);
+    }
+
+    if (u.step === 'menu') {
+      if (text === '1') { u.step = 'pickup'; return await reply('Great! Let\'s book your ride 🚕\n\nWhere should we pick you up? Send your pickup location.'); }
+      if (text === '2') return await reply(PRICES);
+      if (text === '3') return await reply('📞 Support\n\nCall / WhatsApp us on 0783 264 675\n\nType 1 to Book a Ride');
+    }
+
+    if (u.step === 'pickup') { u.pickup = body.trim(); u.step = 'destination'; return await reply(`Pickup: ${u.pickup}\n\nWhere are you going to? Send your destination.`); }
+    if (u.step === 'destination') { u.destination = body.trim(); u.step = 'city'; return await reply(`From: ${u.pickup}\nTo: ${u.destination}\n\nWhich city is this trip in? e.g. Harare, Bulawayo, Mutare`); }
+
+    if (u.step === 'city') {
+      u.city = body.trim();
+      await reply('Calculating distance... please wait a moment');
+      const autoKm = await getDistanceKm(u.pickup, u.destination, u.city);
+      if (autoKm) {
+        u.km = parseFloat(autoKm); u.total = (u.km * 1.50).toFixed(2); u.step = 'distance_confirm';
+        return await reply(`Distance Found!\n\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ~${u.km}km\n\nReply YES to use ${u.km}km, or send a different number.\n\nNo need to open any map - you can book right here on WhatsApp.`);
+      } else {
+        u.step = 'distance_manual';
+        return await reply(`I couldn't auto-calculate it.\n\nHow many kilometers is the trip? Just send the number, e.g. 10\n\nNo need to open any map - just type the number here on WhatsApp.`);
       }
+    }
 
-      if (u.step === 'menu') {
-        if (text === '1') {
-          u.step = 'pickup';
-          return await reply('Great! Let\'s book your ride 🚕\n\nWhere should we pick you up? Send your pickup location.');
-        }
-        if (text === '2') return await reply(PRICES);
-        if (text === '3') return await reply('📞 Support\n\nCall / WhatsApp us on 0783 264 675\n\nType 1 to Book a Ride');
+    if (u.step === 'distance_confirm') {
+      if (text === 'yes') { u.step = 'name'; return await reply('Perfect! What is your name?'); }
+      const km = parseFloat(text);
+      if (!isNaN(km)) { u.km = km; u.total = (km * 1.50).toFixed(2); u.step = 'name'; return await reply(`Got it, using ${km}km.\n\nWhat is your name?`); }
+      return await reply('Reply YES to use that distance, or send a different number.');
+    }
+
+    if (u.step === 'distance_manual') {
+      const km = parseFloat(text);
+      if (isNaN(km)) return await reply('Please send just the number of kilometers, e.g. 10');
+      u.km = km; u.total = (km * 1.50).toFixed(2); u.step = 'name';
+      return await reply('Got it! What is your name?');
+    }
+
+    if (u.step === 'name') {
+      u.name = body.trim(); u.step = 'confirm';
+      await supabase.from('bookings').insert([{ phone: from, customer_name: u.name, pickup: u.pickup, destination: u.destination, city: u.city, distance_km: u.km, price: u.total, status: 'pending' }]);
+      return await reply(`✅ Price Estimate\n\nName: ${u.name}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\n\nPricing: $1.00 per kilometer plus $0.50 driver fee making it a total of $1.50\n\nYour total: $${u.total}\n\nReply YES to confirm this booking, or type 1 to start again.`);
+    }
+
+    if (u.step === 'confirm' && text === 'yes') {
+      u.step = 'menu';
+      await reply('✅ Booking confirmed! A driver will contact you shortly.\n\nType 1 for another booking.');
+      if (OWNER_NUMBER) {
+        try { await client.sendMessage(OWNER_NUMBER + '@c.us', `🚨 NEW BOOKING - My Chauffeur Zim\n\nName: ${u.name}\nPhone: ${from}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\nTotal: $${u.total}\n\nCall them to confirm driver.`); }
+        catch (e) { console.log('Owner notify error:', e.message); }
       }
+      return;
+    }
+  } catch (e) { console.log('Message error:', e.message); }
+});
 
-      if (u.step === 'pickup') {
-        u.pickup = body.trim();
-        u.step = 'destination';
-        return await reply(`Pickup: ${u.pickup}\n\nWhere are you going to? Send your destination.`);
-      }
-
-      if (u.step === 'destination') {
-        u.destination = body.trim();
-        u.step = 'city';
-        return await reply(`From: ${u.pickup}\nTo: ${u.destination}\n\nWhich city is this trip in? e.g. Harare, Bulawayo, Mutare`);
-      }
-
-      if (u.step === 'city') {
-        u.city = body.trim();
-        await reply('Calculating distance... please wait a moment');
-        const autoKm = await getDistanceKm(u.pickup, u.destination, u.city);
-        if (autoKm) {
-          u.km = parseFloat(autoKm);
-          u.total = (u.km * 1.50).toFixed(2);
-          u.step = 'distance_confirm';
-          return await reply(`Distance Found!\n\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ~${u.km}km\n\nReply YES to use ${u.km}km, or send a different number.\n\nNo need to open any map - you can book right here on WhatsApp.`);
-        } else {
-          u.step = 'distance_manual';
-          return await reply(`I couldn't auto-calculate it.\n\nHow many kilometers is the trip? Just send the number, e.g. 10\n\nNo need to open any map - just type the number here on WhatsApp.`);
-        }
-      }
-
-      if (u.step === 'distance_confirm') {
-        if (text === 'yes') {
-          u.step = 'name';
-          return await reply('Perfect! What is your name?');
-        }
-        const km = parseFloat(text);
-        if (!isNaN(km)) {
-          u.km = km;
-          u.total = (km * 1.50).toFixed(2);
-          u.step = 'name';
-          return await reply(`Got it, using ${km}km.\n\nWhat is your name?`);
-        }
-        return await reply('Reply YES to use that distance, or send a different number.');
-      }
-
-      if (u.step === 'distance_manual') {
-        const km = parseFloat(text);
-        if (isNaN(km)) return await reply('Please send just the number of kilometers, e.g. 10');
-        u.km = km;
-        u.total = (km * 1.50).toFixed(2);
-        u.step = 'name';
-        return await reply('Got it! What is your name?');
-      }
-
-      if (u.step === 'name') {
-        u.name = body.trim();
-        u.step = 'confirm';
-        await supabase.from('bookings').insert([{ phone: from, customer_name: u.name, pickup: u.pickup, destination: u.destination, city: u.city, distance_km: u.km, price: u.total, status: 'pending' }]);
-        return await reply(`✅ Price Estimate\n\nName: ${u.name}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\n\nPricing: $1.00 per kilometer plus $0.50 driver fee making it a total of $1.50\n\nYour total: $${u.total}\n\nReply YES to confirm this booking, or type 1 to start again.`);
-      }
-
-      if (u.step === 'confirm' && text === 'yes') {
-        u.step = 'menu';
-        await reply('✅ Booking confirmed! A driver will contact you shortly.\n\nType 1 for another booking.');
-        if (OWNER_NUMBER) {
-          try {
-            const cleanOwner = String(OWNER_NUMBER).replace(/[^0-9]/g, '');
-            await sock.sendMessage(cleanOwner + '@s.whatsapp.net', { text: `🚨 NEW BOOKING - My Chauffeur Zim\n\nName: ${u.name}\nPhone: ${from.replace('@s.whatsapp.net','')}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\nTotal: $${u.total}\n\nCall them to confirm driver.` });
-          } catch (e) { console.log('Owner notify error:', e.message); }
-        }
-        return;
-      }
-    } catch (e) { console.log('Message error:', e.message); }
-  });
-}
-
-startBot();
+console.log('Starting My Chauffeur Zim Bot with whatsapp-web.js...');
+console.log('Pairing for number:', PHONE_NUMBER);
+client.initialize();
