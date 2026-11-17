@@ -5,7 +5,7 @@ const pino = require('pino');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const OWNER_NUMBER = process.env.OWNER_NUMBER;
-const PHONE_NUMBER = process.env.PHONE_NUMBER;
+const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
 
 const users = {};
 
@@ -59,23 +59,36 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  let pairingInterval = null;
+
+  // --- PAIRING CODE - New code every 60 seconds ---
   if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
+    console.log('Pairing for number:', PHONE_NUMBER);
+    console.log('Use this SAME number on your phone:', PHONE_NUMBER);
+
+    const askCode = async () => {
       try {
         const code = await sock.requestPairingCode(PHONE_NUMBER);
         console.log('YOUR PAIRING CODE IS:', code);
-        console.log('Enter it in WhatsApp Business > Linked Devices > Link with phone number');
-      } catch (e) { console.log('Pairing error:', e.message); }
-    }, 3000);
+        console.log('This code expires in 60 seconds - new code coming in 60 sec');
+      } catch (e) {
+        console.log('Pairing error:', e.message);
+      }
+    };
+
+    setTimeout(askCode, 3000);
+    pairingInterval = setInterval(askCode, 60000);
   }
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect } = update;
     if (connection === 'close') {
+      if (pairingInterval) clearInterval(pairingInterval);
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed, reconnecting:', shouldReconnect);
       if (shouldReconnect) startBot();
     } else if (connection === 'open') {
+      if (pairingInterval) clearInterval(pairingInterval);
       console.log('My Chauffeur Zim Bot is ready!');
     }
   });
@@ -172,7 +185,8 @@ async function startBot() {
         await reply('✅ Booking confirmed! A driver will contact you shortly.\n\nType 1 for another booking.');
         if (OWNER_NUMBER) {
           try {
-            await sock.sendMessage(OWNER_NUMBER + '@s.whatsapp.net', { text: `🚨 NEW BOOKING - My Chauffeur Zim\n\nName: ${u.name}\nPhone: ${from.replace('@s.whatsapp.net','')}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\nTotal: $${u.total}\n\nCall them to confirm driver.` });
+            const cleanOwner = String(OWNER_NUMBER).replace(/[^0-9]/g, '');
+            await sock.sendMessage(cleanOwner + '@s.whatsapp.net', { text: `🚨 NEW BOOKING - My Chauffeur Zim\n\nName: ${u.name}\nPhone: ${from.replace('@s.whatsapp.net','')}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\nTotal: $${u.total}\n\nCall them to confirm driver.` });
           } catch (e) { console.log('Owner notify error:', e.message); }
         }
         return;
