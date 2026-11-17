@@ -53,14 +53,34 @@ async function getDistanceKm(pickup, destination, city) {
   } catch (e) { console.log('Distance calc error:', e.message); return null; }
 }
 
-client.on('qr', async () => {
-  if (pairingRequested) return;
-  pairingRequested = true;
+// --- PAIRING CODE WITH AUTO-RETRY ---
+async function getPairingCode() {
   const phone = process.env.PHONE_NUMBER;
+  console.log('Trying to pair with phone:', phone);
+  if (!phone) {
+    console.log('ERROR: PHONE_NUMBER is missing in Railway Variables!');
+    return;
+  }
   try {
     const code = await client.requestPairingCode(phone);
     console.log('YOUR PAIRING CODE IS:', code);
-  } catch (err) { console.log('Pairing code error:', err.message); pairingRequested = false; }
+    console.log('Enter this code in WhatsApp Business > Linked Devices > Link with phone number - FAST, within 20 seconds');
+  } catch (err) {
+    console.log('Pairing code error FULL:', err);
+    console.log('Retrying in 15 seconds...');
+    setTimeout(getPairingCode, 15000);
+  }
+}
+
+client.on('qr', () => {
+  if (pairingRequested) return;
+  pairingRequested = true;
+  getPairingCode();
+});
+
+client.on('disconnected', (reason) => {
+  console.log('Disconnected:', reason);
+  pairingRequested = false;
 });
 
 client.on('ready', () => console.log('My Chauffeur Zim Bot is ready!'));
