@@ -49,9 +49,9 @@ Type 1 to Book`;
 };
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+  
   const { version } = await fetchLatestBaileysVersion();
-
+const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_baileys');
   const sock = makeWASocket({
     version,
     auth: state,
