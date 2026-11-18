@@ -9,8 +9,6 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 const users = {};
 
 // --- PRICES ---
-// Day 6am-8pm: $0.50/km + $0.50 driver fee
-// Night 8pm-6am: $0.75/km + $0.75 driver fee, then back to Day at 6am
 function getPrices() {
   const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Harare' })).getHours();
   const isNight = hour >= 20 || hour < 6;
@@ -64,34 +62,56 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  let codeRequested = false;
+  let pairingTimer = null;
+  let pairingStarted = false;
+
+  async function askForCode() {
+    if (sock.authState.creds.registered) {
+      if (pairingTimer) clearInterval(pairingTimer);
+      return;
+    }
+    try {
+      const code = await sock.requestPairingCode(PHONE_NUMBER);
+      console.log('======================================');
+      console.log('YOUR_PAIRING_CODE_IS:' + code);
+      console.log('WhatsApp>Linked_Devices>Link_with_phone_number');
+      console.log('Phone:' + PHONE_NUMBER);
+      console.log('Type this code NOW - new code in 65 sec');
+      console.log('======================================');
+    } catch (e) {
+      console.log('PAIRING_FAIL:' + e.message + ' - will retry in 65 sec');
+    }
+  }
+
+  function startPairingLoop() {
+    if (pairingStarted) return;
+    pairingStarted = true;
+    console.log('Not registered yet - starting pairing code loop...');
+    askForCode();
+    pairingTimer = setInterval(askForCode, 65000);
+  }
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect } = update;
-    // NO QR - Pairing Code Only, Baileys version works
+    console.log('CONNECTION_STATUS:' + connection);
+
     if (connection === 'close') {
+      if (pairingTimer) clearInterval(pairingTimer);
+      pairingStarted = false;
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed, reconnecting:' + shouldReconnect);
-      if (shouldReconnect) startBot();
+      if (shouldReconnect) {
+        setTimeout(() => startBot(), 3000);
+      } else {
+        console.log('LOGGED OUT - delete auth_baileys volume in Railway and redeploy');
+      }
     } else if (connection === 'open') {
       console.log('My Chauffeur Zim Bot is ready!');
-    } else if (!sock.authState.creds.registered && !codeRequested) {
-      codeRequested = true;
-      // Wait 3 sec then ask for pairing code
-      setTimeout(async () => {
-        try {
-          const code = await sock.requestPairingCode(PHONE_NUMBER);
-          console.log('======================================');
-          console.log('YOUR_PAIRING_CODE_IS:' + code);
-          console.log('WhatsApp>Linked_Devices>Link_with_phone_number');
-          console.log('Phone:' + PHONE_NUMBER);
-          console.log('Code lasts 60 sec in Baileys - type it now');
-          console.log('======================================');
-        } catch (e) {
-          console.log('PAIRING_FAIL:' + e.message);
-          codeRequested = false;
-        }
-      }, 3000);
+      if (pairingTimer) clearInterval(pairingTimer);
+    } else if (connection === 'connecting') {
+      if (!sock.authState.creds.registered) {
+        startPairingLoop();
+      }
     }
   });
 
@@ -160,7 +180,6 @@ async function startBot() {
 
         try { await sock.sendMessage(OWNER_NUMBER + '@s.whatsapp.net', { text: `🚨 NEW BOOKING\nName: ${u.name}\nPhone: ${u.customerPhone}\nFrom: ${u.pickup}\nTo: ${u.destination}\n${u.km}km = $${u.total.toFixed(2)}\nRide ID: ${u.rideId}` }); } catch (e) {}
 
-        // AFTER 2 MINS: TAKE FIRST 5 PRICES FROM DRIVER WEBSITE
         setTimeout(async () => {
           try {
             const { data: bids } = await supabase.from('bids').select('*').eq('ride_id', u.rideId).order('price', { ascending: true }).limit(5);
