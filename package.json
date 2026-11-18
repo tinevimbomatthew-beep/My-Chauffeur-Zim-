@@ -4,7 +4,9 @@
   "main": "bot.js",
   "scripts": { "start": "node bot.js" },
   "dependencies": {
-    "whatsapp-web.js": "latest",
-    "qrcode-terminal": "latest"
+    "@whiskeysockets/baileys": "latest",
+    "@supabase/supabase-js": "latest",
+    "pino": "latest",
+    "ws": "latest"
   }
 }
