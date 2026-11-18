@@ -5,6 +5,7 @@
   "scripts": { "start": "node bot.js" },
   "dependencies": {
     "whatsapp-web.js": "latest",
-    "@supabase/supabase-js": "latest"
+    "@supabase/supabase-js": "latest",
+    "ws": "latest"
   }
 }
