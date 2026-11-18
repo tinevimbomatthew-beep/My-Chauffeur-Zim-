@@ -1,26 +1,26 @@
-// My Chauffeur Zim - bot.js - PAIRING CODE VERSION
-// Pricing: Day $1.50/km | Night from 8pm $2.00/km for driver safety
-// Maps: Nominatim + Photon, OSRM + Valhalla
+console.log('=== STARTING MY CHAUFFEUR ZIM BOT ===');
+console.log('Time:', new Date().toISOString());
+console.log('PHONE_NUMBER env:', process.env.PHONE_NUMBER || 'NOT SET - using default');
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const axios = require('axios');
 
-const PHONE_NUMBER = process.env.PHONE_NUMBER || '263783264675'; // YOUR WhatsApp Business number, no +
+const PHONE_NUMBER = (process.env.PHONE_NUMBER || '263783264675').replace(/[^0-9]/g, '');
+console.log('Using phone:', PHONE_NUMBER);
 
-// --- TIME: Harare ---
+// --- TIME ---
 function getHarareHour() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Harare' })).getHours();
 }
 function isNight() { return getHarareHour() >= 20; }
 
-// --- PRICING ---
+// --- PRICING: Day $1.50/km, Night $2.00/km ---
 function calculatePrice(km) {
   const night = isNight();
-  const fareRate = 1.00;
   const feeRate = night ? 1.00 : 0.50;
-  const perKm = fareRate + feeRate;
-  return { km, night, fareRate, feeRate, perKm, fare: fareRate * km, fee: feeRate * km, total: perKm * km };
+  const perKm = 1.00 + feeRate;
+  return { night, feeRate, perKm, fare: 1.00 * km, fee: feeRate * km, total: perKm * km };
 }
 function formatPrice(pickup, dropoff, km, when, name) {
   const p = calculatePrice(km);
@@ -31,61 +31,34 @@ function formatPrice(pickup, dropoff, km, when, name) {
 }
 
 // --- MAPS ---
-async function geocodeNominatim(place) {
+async function geocode(place) {
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place + ', Zimbabwe')}&limit=1&countrycodes=zw`;
-    const res = await axios.get(url, { headers: { 'User-Agent': 'MyChauffeurZim/1.0' }, timeout: 8000 });
-    if (res.data[0]) return { lat: parseFloat(res.data[0].lat), lon: parseFloat(res.data[0].lon), src: 'Nominatim' };
+    const r = await axios.get(url, { headers: { 'User-Agent': 'MyChauffeurZim/1.0' }, timeout: 8000 });
+    if (r.data[0]) return { lat: parseFloat(r.data[0].lat), lon: parseFloat(r.data[0].lon) };
   } catch (e) { console.log('Nominatim fail', e.message); }
-  return null;
-}
-async function geocodePhoton(place) {
   try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(place + ', Zimbabwe')}&limit=1`;
-    const res = await axios.get(url, { timeout: 8000 });
-    if (res.data.features?.[0]) {
-      const c = res.data.features[0].geometry.coordinates;
-      return { lon: c[0], lat: c[1], src: 'Photon' };
-    }
+    const r2 = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(place + ', Zimbabwe')}&limit=1`, { timeout: 8000 });
+    if (r2.data.features?.[0]) { const c = r2.data.features[0].geometry.coordinates; return { lon: c[0], lat: c[1] }; }
   } catch (e) { console.log('Photon fail', e.message); }
   return null;
 }
-async function geocode(place) {
-  return (await geocodeNominatim(place)) || (await geocodePhoton(place)) || null;
-}
 function haversineKm(a, b) {
-  const R = 6371;
-  const dLat = (b.lat - a.lat) * Math.PI / 180;
-  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const R = 6371; const dLat = (b.lat - a.lat) * Math.PI / 180; const dLon = (b.lon - a.lon) * Math.PI / 180;
   const x = Math.sin(dLat/2)**2 + Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2;
   return 2 * R * Math.asin(Math.sqrt(x));
 }
-async function osrmKm(a, b) {
-  try {
-    const res = await axios.get(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`, { timeout: 8000 });
-    if (res.data.routes?.[0]?.distance) return res.data.routes[0].distance / 1000;
-  } catch (e) { console.log('OSRM fail', e.message); }
-  return null;
-}
-async function valhallaKm(a, b) {
-  try {
-    const res = await axios.post('https://valhalla1.openstreetmap.de/route', {
-      locations: [{ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }],
-      costing: 'auto'
-    }, { timeout: 8000 });
-    if (res.data.trip?.summary?.length) return res.data.trip.summary.length;
-  } catch (e) { console.log('Valhalla fail', e.message); }
-  return null;
-}
 async function getRoadDistanceKm(pickup, dropoff) {
-  const a = await geocode(pickup);
-  const b = await geocode(dropoff);
+  const a = await geocode(pickup); const b = await geocode(dropoff);
   if (!a || !b) return null;
-  console.log(`Geocoded: ${pickup} -> ${a.lat},${a.lon} (${a.src}) | ${dropoff} -> ${b.lat},${b.lon} (${b.src})`);
-  let km = await osrmKm(a, b);
-  if (km) { console.log('OSRM distance', km); return km; }
-  km = await valhallaKm(a, b);
-  if (km) { console.log('Valhalla distance', km); return km; }
+  try {
+    const r = await axios.get(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`, { timeout: 8000 });
+    if (r.data.routes?.[0]?.distance) return r.data.routes[0].distance / 1000;
+  } catch (e) { console.log('OSRM fail', e.message); }
+  try {
+    const r2 = await axios.post('https://valhalla1.openstreetmap.de/route', { locations: [{ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon }], costing: 'auto' }, { timeout: 8000 });
+    if (r2.data.trip?.summary?.length) return r2.data.trip.summary.length;
+  } catch (e) { console.log('Valhalla fail', e.message); }
   return haversineKm(a, b) * 1.35;
 }
 
@@ -95,33 +68,47 @@ const WELCOME = `👋 *Welcome to My Chauffeur Zim!*\n\nHow can we help you toda
 const PRICES = `💰 *My Chauffeur Zim Prices*\n\nDay (before 8pm): *$1.50 per km*\n$1.00 fare + $0.50 driver fee per km\n\nNight (from 8pm): *$2.00 per km*\n$1.00 fare + $1.00 driver fee per km for driver safety\n\nExample: 10km = $15.00 day / $20.00 night\n\nBot calculates road distance between pickup and drop-off automatically.\n\nType *1* to Book a Ride`;
 
 async function start() {
+  console.log('Connecting to WhatsApp...');
   const { state, saveCreds } = await useMultiFileAuthState('auth');
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({ version, logger: pino({ level: 'silent' }), auth: state, printQRInTerminal: false, browser: ['My Chauffeur Zim', 'Chrome', '1.0'] });
   sock.ev.on('creds.update', saveCreds);
 
-  // *** PAIRING CODE LOGIC - THIS WAS MISSING BEFORE ***
+  // *** PAIRING CODE EVERY 60 SECONDS ***
+  let pairingInterval = null;
+  async function askForCode() {
+    if (sock.authState.creds.registered) {
+      if (pairingInterval) clearInterval(pairingInterval);
+      return;
+    }
+    try {
+      const code = await sock.requestPairingCode(PHONE_NUMBER);
+      console.log('====================================');
+      console.log(`>>> PAIRING CODE: ${code} <<<`);
+      console.log(`For number: ${PHONE_NUMBER}`);
+      console.log('Enter in WhatsApp Business > Linked Devices > Link with phone number');
+      console.log('This code expires in 60 seconds - new code coming...');
+      console.log('====================================');
+    } catch (e) {
+      console.log('Pairing failed:', e.message);
+    }
+  }
   if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
-      try {
-        const code = await sock.requestPairingCode(PHONE_NUMBER);
-        console.log('====================================');
-        console.log(`PAIRING CODE FOR ${PHONE_NUMBER}: ${code}`);
-        console.log('Go to WhatsApp Business > Linked Devices > Link with phone number > Enter this code');
-        console.log('====================================');
-      } catch (e) {
-        console.log('Pairing code failed:', e.message);
-        console.log('Make sure PHONE_NUMBER is correct and number is not already linked to another bot.');
-      }
-    }, 3000);
+    console.log('Not registered yet - will request pairing code...');
+    setTimeout(askForCode, 2000);
+    pairingInterval = setInterval(askForCode, 60000); // every 60s
   }
 
   sock.ev.on('connection.update', (u) => {
+    console.log('Connection update:', u.connection);
     if (u.connection === 'close') {
       const shouldReconnect = u.lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed, reconnect?', shouldReconnect);
+      console.log('Closed, reconnect?', shouldReconnect);
       if (shouldReconnect) start();
-    } else if (u.connection === 'open') console.log('✅ Bot connected - My Chauffeur Zim is LIVE');
+    } else if (u.connection === 'open') {
+      console.log('✅ Bot connected - My Chauffeur Zim is LIVE');
+      if (pairingInterval) clearInterval(pairingInterval);
+    }
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
@@ -134,7 +121,6 @@ async function start() {
     let s = sessions.get(from);
     if (!s) { s = { step: 'menu' }; sessions.set(from, s); }
     const send = (t) => sock.sendMessage(from, { text: t });
-
     if (lower === 'hi' || lower === 'hello' || lower === 'menu') { s.step = 'menu'; return send(WELCOME); }
     if (s.step === 'menu') {
       if (text === '1') { s.step = 'pickup'; return send(`🚖 *Book a Ride*\n\nWhere should we pick you up from?`); }
@@ -149,18 +135,13 @@ async function start() {
       s.name = text;
       await send(`Calculating road distance from ${s.pickup} to ${s.dropoff}... Please wait ⏳`);
       const km = await getRoadDistanceKm(s.pickup, s.dropoff);
-      if (!km || km < 0.5 || km > 200) {
-        s.step = 'menu';
-        return send(`Sorry, I couldn't find that route. Please send clearer places (e.g. Paddonhurst, Bulawayo to City Hall, Bulawayo).\n\nType *hi* to try again`);
-      }
-      s.km = km;
-      s.step = 'confirm';
+      if (!km || km < 0.5 || km > 200) { s.step = 'menu'; return send(`Sorry, I couldn't find that route. Please send clearer places (e.g. Paddonhurst, Bulawayo to City Hall, Bulawayo).\n\nType *hi* to try again`); }
+      s.km = km; s.step = 'confirm';
       return send(formatPrice(s.pickup, s.dropoff, km, s.when, s.name));
     }
     if (s.step === 'confirm') {
       if (lower === 'yes') {
-        const p = calculatePrice(s.km);
-        s.step = 'menu';
+        const p = calculatePrice(s.km); s.step = 'menu';
         return send(`Thanks ${s.name}! We got your request. ✅\n\n${s.pickup} → ${s.dropoff}\n${s.km.toFixed(1)}km = $${p.total.toFixed(2)}\nWhen: ${s.when}\n\nWe will confirm shortly.\n\nType *hi* to go back to menu`);
       }
       if (lower === 'no') { s.step = 'menu'; return send(`No problem. Cancelled.\n\nType *hi* to go back to menu`); }
