@@ -1,72 +1,60 @@
 global.WebSocket = require('ws');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const { createClient } = require('@supabase/supabase-js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const qrcode = require('qrcode-terminal');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-const OWNER_NUMBER = String(process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '');
 const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
-
 const users = {};
 
-// --- MIN/MAX RULE ---
-function isNight(){ return new Date(new Date().toLocaleString('en-US',{timeZone:'Africa/Harare'})).getHours() >= 20; }
-function calcPrice(km, wantMax){
-  const night = isNight();
-  const MIN = night ? 1.50 : 1.00;
-  const MAX = night ? 2.00 : 1.50;
-  const perKm = wantMax ? MAX : MIN;
-  return { night, MIN, MAX, perKm, total: perKm*km, minimum: MIN*km, maximum: MAX*km };
+// --- YOUR NEW PRICES ---
+function getPrices() {
+  const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Harare' })).getHours();
+  const isNight = hour >= 20 || hour < 6; // 8pm to 6am
+  if (isNight) {
+    return { isNight: true, label: '🌙 NIGHT (8pm - 6am)', farePerKm: 0.75, driverFee: 0.75 };
+  }
+  return { isNight: false, label: '☀️ DAY (6am - 8pm)', farePerKm: 0.50, driverFee: 0.50 };
 }
-function validateBid(km, total){
-  const p = calcPrice(km, false);
-  if(total < p.minimum - 0.01) return {ok:false, reason:`Below MIN $${p.minimum.toFixed(2)}`};
-  if(total > p.maximum + 0.01) return {ok:false, reason:`Above MAX $${p.maximum.toFixed(2)}`};
-  return {ok:true};
+
+function calc(km) {
+  const p = getPrices();
+  const fare = km * p.farePerKm;
+  const total = fare + p.driverFee;
+  return { ...p, fare, total };
 }
 
 const WELCOME = `👋 Welcome to My Chauffeur Zim!
 
-How can we help you today?
+Type 1 to Get Price 🚕
+Type 2 for Prices 💰`;
 
-Type 1 to Book a Ride 🚕
-Type 2 for Prices 💰
-Type 3 for Support 📞`;
+const PRICES_MSG = () => {
+  const p = getPrices();
+  return `💰 My Chauffeur Zim Prices
 
-const PRICES = `💰 My Chauffeur Zim Prices - RULE, Cannot Be Broken
+${p.label} - RIGHT NOW
 
-Day: MIN $1.00/km - MAX $1.50/km
-Night (from 8pm): MIN $1.50/km - MAX $2.00/km
+DAY (6am - 8pm):
+Fare: $0.50 per km
+Driver Fee: $0.50
+Example 10km = $5.50
 
-Driver fee is OPTIONAL. Cheapest driver wins.
-Example 10km: Day $10-$15, Night $15-$20
+NIGHT (8pm - 6am):
+Fare: $0.75 per km
+Driver Fee: $0.75
+Example 10km = $8.25
 
-Type 1 to Book a Ride`;
+Night starts at 8pm and ends at 6am, then we go back to Day price automatically.
 
-async function getDistanceKm(pickup, destination, city) {
-  try {
-    async function geocode(place) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place + ', ' + city + ', Zimbabwe')}&limit=1`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'MyChauffeurZim/1.0' } });
-      const data = await res.json();
-      if (!data[0]) return null;
-      return { lat: data[0].lat, lon: data[0].lon };
-    }
-    const from = await geocode(pickup);
-    const to = await geocode(destination);
-    if (!from || !to) return null;
-    const routeUrl = `https://router.project-osrm.org/route/v1/driving/${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
-    const routeRes = await fetch(routeUrl);
-    const routeData = await routeRes.json();
-    if (!routeData.routes || !routeData.routes[0]) return null;
-    return (routeData.routes[0].distance / 1000).toFixed(1);
-  } catch (e) { console.log('Distance calc error:', e.message); return null; }
-}
+Type 1 to Get Price`;
+};
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+  const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
+    version,
     auth: state,
     printQRInTerminal: false,
     logger: pino({ level: 'silent' }),
@@ -75,34 +63,23 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  let pairingInterval = null;
+  let codeRequested = false;
 
-  // --- PAIRING CODE - FIXED: ONE CODE ONLY, NO AUTO-REFRESH ---
-  if (!sock.authState.creds.registered) {
-    console.log('Pairing for number:', PHONE_NUMBER);
-    const askCode = async () => {
-      try {
-        console.log('Requesting pairing code for:', PHONE_NUMBER);
-        const code = await sock.requestPairingCode(PHONE_NUMBER);
-        console.log('YOUR PAIRING CODE IS:', code);
-        console.log('USE THIS CODE NOW - TYPE IT WITHIN 20 SECONDS');
-      } catch (e) {
-        console.log('Pairing error FULL:', e.message);
-        console.log('Pairing error stack:', e.stack?.slice(0, 500));
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr && !sock.authState.creds.registered) {
+      console.log('=== SCAN THIS QR ===');
+      qrcode.generate(qr, { small: true });
+      if (!codeRequested) {
+        codeRequested = true;
+        setTimeout(async () => {
+          try {
+            const code = await sock.requestPairingCode(PHONE_NUMBER);
+            console.log('YOUR PAIRING CODE IS:', code);
+          } catch (e) { console.log('Pairing error, use QR:', e.message); }
+        }, 3000);
       }
-    };
-    sock.ev.on('connection.update', (u) => {
-      if (u.connection === 'connecting' && !pairingInterval) {
-        console.log('Baileys connecting, will request code in 3 sec...');
-        // FIX: ONE CODE ONLY - no setInterval, old code was killing your code while you typed
-        pairingInterval = true;
-        setTimeout(askCode, 3000);
-      }
-    });
-  }
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+    }
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed, reconnecting:', shouldReconnect);
@@ -120,94 +97,33 @@ async function startBot() {
       const body = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
       const text = body.trim().toLowerCase();
       const reply = async (txt) => { await sock.sendMessage(from, { text: txt }); };
+
       if (!users[from]) users[from] = { step: 'menu' };
       const u = users[from];
+
       if (text === 'hi' || text === 'hello' || text === 'start' || text === 'menu') {
         u.step = 'menu';
         return await reply(WELCOME);
       }
+
       if (u.step === 'menu') {
-        if (text === '1') { u.step = 'pickup'; return await reply('Great! Let\'s book your ride 🚕\n\nWhere should we pick you up? Send your pickup location.'); }
-        if (text === '2') return await reply(PRICES);
-        if (text === '3') return await reply('📞 Support\n\nCall / WhatsApp us on 0783 264 675\n\nType 1 to Book a Ride');
+        if (text === '1') { u.step = 'pickup'; return await reply('Let\'s get your price 🚕\n\nWhere should we pick you up?'); }
+        if (text === '2') return await reply(PRICES_MSG());
       }
-      if (u.step === 'pickup') { u.pickup = body.trim(); u.step = 'destination'; return await reply(`Pickup: ${u.pickup}\n\nWhere are you going to? Send your destination.`); }
-      if (u.step === 'destination') { u.destination = body.trim(); u.step = 'city'; return await reply(`From: ${u.pickup}\nTo: ${u.destination}\n\nWhich city is this trip in? e.g. Harare, Bulawayo, Mutare`); }
-      if (u.step === 'city') {
-        u.city = body.trim();
-        await reply('Calculating distance... please wait a moment');
-        const autoKm = await getDistanceKm(u.pickup, u.destination, u.city);
-        if (autoKm) {
-          u.km = parseFloat(autoKm);
-          const pMin = calcPrice(u.km, false);
-          const pMax = calcPrice(u.km, true);
-          u.totalMin = pMin.total.toFixed(2); u.totalMax = pMax.total.toFixed(2);
-          u.total = pMax.total.toFixed(2);
-          u.step = 'distance_confirm';
-          return await reply(`Distance Found!\n\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ~${u.km}km\n\nPrice Range (MIN/MAX RULE):\n$${u.totalMin} (MIN, no fee) - $${u.totalMax} (MAX, with fee)\n${pMin.night ? '🌙 Night rate: MIN $1.50/km MAX $2.00/km' : '☀️ Day rate: MIN $1.00/km MAX $1.50/km'}\n\nReply YES to use ${u.km}km, or send a different number.\n\nNo need to open any map - you can book right here on WhatsApp.`);
-        } else {
-          u.step = 'distance_manual';
-          return await reply(`I couldn't auto-calculate it.\n\nHow many kilometers is the trip? Just send the number, e.g. 10\n\nNo need to open any map - just type the number here on WhatsApp.`);
-        }
-      }
-      if (u.step === 'distance_confirm') {
-        if (text === 'yes') { u.step = 'name'; return await reply('Perfect! What is your name?'); }
+
+      if (u.step === 'pickup') { u.pickup = body.trim(); u.step = 'destination'; return await reply(`Pickup: ${u.pickup}\n\nWhere are you going to?`); }
+      if (u.step === 'destination') { u.destination = body.trim(); u.step = 'km'; return await reply(`From: ${u.pickup}\nTo: ${u.destination}\n\nHow many kilometers is the trip? Just send the number, e.g. 10`); }
+      if (u.step === 'km') {
         const km = parseFloat(text);
-        if (!isNaN(km)) { u.km = km; const pMin = calcPrice(km,false); const pMax = calcPrice(km,true); u.totalMin=pMin.total.toFixed(2); u.totalMax=pMax.total.toFixed(2); u.total=pMax.total.toFixed(2); u.step = 'name'; return await reply(`Got it, using ${km}km. Price $${u.totalMin} - $${u.totalMax}.\n\nWhat is your name?`); }
-        return await reply('Reply YES to use that distance, or send a different number.');
+        if (isNaN(km)) return await reply('Please send just the number, e.g. 10');
+        const c = calc(km);
+        u.step = 'menu';
+        return await reply(`✅ Your Price - My Chauffeur Zim\n\nFrom: ${u.pickup}\nTo: ${u.destination}\nDistance: ${km}km\n${c.label}\n\nBreakdown:\nFare: ${km}km x $${c.farePerKm.toFixed(2)} = $${c.fare.toFixed(2)}\nDriver Fee: $${c.driverFee.toFixed(2)}\n----------------\nTOTAL: $${c.total.toFixed(2)}\n\nTo book, call / WhatsApp 0783 264 675\n\nType 1 for another price, Type 2 for Prices`);
       }
-      if (u.step === 'distance_manual') {
-        const km = parseFloat(text);
-        if (isNaN(km)) return await reply('Please send just the number of kilometers, e.g. 10');
-        u.km = km; const pMin = calcPrice(km,false); const pMax = calcPrice(km,true); u.totalMin=pMin.total.toFixed(2); u.totalMax=pMax.total.toFixed(2); u.total=pMax.total.toFixed(2); u.step = 'name';
-        return await reply('Got it! What is your name?');
-      }
-      if (u.step === 'name') {
-        u.name = body.trim(); u.step = 'confirm';
-        await supabase.from('bookings').insert([{ phone: from, customer_name: u.name, pickup: u.pickup, destination: u.destination, city: u.city, distance_km: u.km, price: u.total, status: 'pending' }]);
-        return await reply(`✅ Price Estimate\n\nName: ${u.name}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\n\nPricing RULE:\nMIN: $${u.totalMin} (no driver fee)\nMAX: $${u.totalMax} (with driver fee)\nDrivers will bid between MIN and MAX. Cheapest wins. No driver can go below MIN or above MAX.\n\nReply YES to confirm this booking, or type 1 to start again.`);
-      }
-      if (u.step === 'confirm' && text === 'yes') {
-        u.step = 'waiting_drivers';
-        const { data: ride } = await supabase.from('rides').insert([{ customer_phone: from, customer_name: u.name, pickup: u.pickup, destination: u.destination, city: u.city, distance_km: u.km, price_min: u.totalMin, price_max: u.totalMax, status: 'open' }]).select().single();
-        u.rideId = ride?.id;
-        await reply(`✅ Booking confirmed! Posting to drivers now...\n\n${u.pickup} → ${u.destination}\n${u.km}km = $${u.totalMin} - $${u.totalMax}\n\nDrivers have 3 mins to bid (first 5, cheapest first). I will send you the drivers now.`);
-        if (OWNER_NUMBER) {
-          try { await sock.sendMessage(OWNER_NUMBER + '@s.whatsapp.net', { text: `🚨 NEW BOOKING - My Chauffeur Zim\n\nName: ${u.name}\nPhone: ${from}\nFrom: ${u.pickup}\nTo: ${u.destination}\nCity: ${u.city}\nDistance: ${u.km}km\nPrice: $${u.totalMin} - $${u.totalMax} (MIN/MAX)\nRide ID: ${u.rideId}\n\nDrivers bidding now on website.` }); }
-          catch (e) { console.log('Owner notify error:', e.message); }
-        }
-        setTimeout(async () => {
-          try {
-            const { data: bids } = await supabase.from('bids').select('*').eq('ride_id', u.rideId).order('price', { ascending: true }).limit(5);
-            if (!bids || bids.length === 0) {
-              await sock.sendMessage(from, { text: `Sorry, no drivers bid in 3 mins. Type 1 to try again.` });
-              u.step = 'menu'; return;
-            }
-            u.bids = bids; u.step = 'choose_driver';
-            let list = `✅ ${bids.length} Drivers Available - Cheapest First:\n\n`;
-            bids.forEach((b,i) => { list += `${i+1} - ${b.driver_name} - ${b.plate} - ${b.distance_km}km = $${Number(b.price).toFixed(2)} ${Number(b.price) <= Number(u.totalMin)+0.01 ? '(No fee - MIN)' : '(With fee)'}\n`; });
-            list += `\nReply 1, 2, 3... to choose your driver.`;
-            await sock.sendMessage(from, { text: list });
-          } catch(e){ console.log('Bids fetch error', e.message); }
-        }, 180000);
-        return;
-      }
-      if (u.step === 'choose_driver') {
-        const idx = parseInt(text) - 1;
-        if (!isNaN(idx) && u.bids && u.bids[idx]) {
-          const chosen = u.bids[idx];
-          const check = validateBid(u.km, Number(chosen.price));
-          if (!check.ok) { return await reply(`That bid was blocked: ${check.reason}. Choose another driver.`); }
-          u.step = 'menu';
-          await supabase.from('rides').update({ status: 'matched', chosen_driver: chosen.driver_name }).eq('id', u.rideId);
-          return await reply(`✅ You chose ${chosen.driver_name} - ${chosen.plate}\n\n${u.pickup} → ${u.destination}\n${u.km}km = $${Number(chosen.price).toFixed(2)}\n\nDriver number: ${chosen.driver_phone}\nCall / WhatsApp them now to confirm.\n\nType 1 for another booking.`);
-        }
-        return await reply(`Reply 1 to ${u.bids?.length || 5} to choose a driver.`);
-      }
+
     } catch (e) { console.log('Message error:', e.message); }
   });
 }
 
-console.log('Starting My Chauffeur Zim Bot with Baileys...');
-console.log('Pairing for number:', PHONE_NUMBER);
+console.log('Starting My Chauffeur Zim Bot...');
 startBot();
