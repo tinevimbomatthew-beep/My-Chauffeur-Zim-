@@ -7,18 +7,21 @@ const OWNER_NUMBER = String(process.env.OWNER_NUMBER || '263783264675').replace(
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const users = {};
 
-// --- PRICES: Day 6am-8pm, Night 8pm-6am ---
+// --- PRICES ---
+// Day 6am-8pm: $0.50/km + $0.50 driver fee
+// Night 8pm-6am: $0.75/km + $0.75 driver fee, then back to Day at 6am
 function getPrices() {
   const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Harare' })).getHours();
   const isNight = hour >= 20 || hour < 6;
   if (isNight) return { isNight: true, label: '🌙 NIGHT (8pm - 6am)', farePerKm: 0.75, driverFee: 0.75 };
   return { isNight: false, label: '☀️ DAY (6am - 8pm)', farePerKm: 0.50, driverFee: 0.50 };
 }
+
 function calc(km) {
   const p = getPrices();
   const fare = km * p.farePerKm;
   const total = fare + p.driverFee;
-  return { ...p, fare, total, minTotal: total, maxTotal: total };
+  return { ...p, fare, total };
 }
 
 const WELCOME = `👋 Welcome to My Chauffeur Zim!
@@ -47,45 +50,49 @@ Night 8pm-6am, then back to Day automatically.
 Type 1 to Book`;
 };
 
-// --- FIX 1: TimeoutError fix - longer timeouts, no crash ---
+// --- WHATSAPP WEB.JS - PAIRING CODE ONLY, NO QR, NO BAILEYS ---
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'auth_wwebjs' }),
   puppeteer: {
     headless: true,
-    timeout: 120000, // was 30000, now 120s
+    timeout: 120000,
     protocolTimeout: 120000,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--single-process', '--disable-gpu', '--disable-extensions']
   }
 });
 
-// --- FIX 2: Pairing code auto-refresh = 60+ sec window ---
-// WhatsApp only allows 20 sec per code, so we request a NEW code every 20 sec
-// You get unlimited tries for 60+ sec, no redeploy needed
+// --- PAIRING CODE - AUTO REFRESH FOR 60+ SEC WINDOW ---
+// WhatsApp only allows 20 sec per code, so we request a NEW code every 25 sec
 let pairingTimer = null;
 let pairingActive = false;
+let qrCount = 0;
 
 async function requestFreshCode() {
   if (!pairingActive) return;
   try {
+    console.log('Requesting pairing code for ' + PHONE_NUMBER);
     const code = await client.requestPairingCode(PHONE_NUMBER);
     console.log('======================================');
-    console.log('YOUR PAIRING CODE IS:', code);
-    console.log('Valid for ~20 sec - NEW code coming in 20 sec if you miss it');
-    console.log('WhatsApp > Linked Devices > Link with phone number');
-    console.log('Phone:', PHONE_NUMBER);
+    console.log('YOUR_PAIRING_CODE_IS:' + code);
+    console.log('WhatsApp>Linked_Devices>Link_with_phone_number');
+    console.log('Phone:' + PHONE_NUMBER);
+    console.log('Type latest code - new code every 25 sec');
     console.log('======================================');
   } catch (e) {
-    console.log('Pairing code error (will retry in 20s):', e.message);
+    console.log('PAIRING_FAIL:' + (e.message || e).toString().replace(/\n/g, ' ').slice(0, 500));
+    console.log('PAIRING_FAIL_STACK:' + (e.stack || '').toString().replace(/\n/g, ' ').slice(0, 500));
   }
 }
 
 client.on('qr', async () => {
-  console.log('QR event - starting pairing code auto-refresh (60+ sec window)');
+  qrCount++;
+  console.log('QR_EVENT_COUNT:' + qrCount);
   if (!pairingActive) {
     pairingActive = true;
     await requestFreshCode();
-    // Refresh every 20 sec = you always have a fresh code
-    pairingTimer = setInterval(requestFreshCode, 20000);
+    pairingTimer = setInterval(requestFreshCode, 25000);
+  } else {
+    console.log('Already requesting codes, waiting...');
   }
 });
 
@@ -101,13 +108,14 @@ client.on('ready', () => {
   if (pairingTimer) clearInterval(pairingTimer);
 });
 
-client.on('auth_failure', (msg) => { console.log('Auth failed:', msg); });
-client.on('disconnected', (reason) => { console.log('Disconnected:', reason); });
+client.on('auth_failure', (msg) => { console.log('Auth failed:' + msg); });
+client.on('disconnected', (reason) => { console.log('Disconnected:' + reason); });
 
+// --- BOT FLOW ---
 client.on('message', async (msg) => {
   try {
     if (msg.fromMe) return;
-    const from = msg.from; // e.g. 26377xxxx@c.us
+    const from = msg.from;
     const body = (msg.body || '').trim();
     const text = body.toLowerCase();
     if (!users[from]) users[from] = { step: 'menu' };
@@ -143,7 +151,7 @@ client.on('message', async (msg) => {
       return await reply(`Name: ${u.name}\nFrom: ${u.pickup}\nTo: ${u.destination}\n${u.km}km = $${u.total.toFixed(2)}\n\nReply YES to confirm and send to drivers, or type 1 to start again.`);
     }
 
-    // --- CONFIRM -> CREATE RIDE IN SUPABASE -> DRIVERS BID ---
+    // CONFIRM -> CREATE RIDE -> DRIVERS BID ON WEBSITE
     if (u.step === 'confirm' && text === 'yes') {
       u.step = 'waiting_drivers';
       const { data: ride, error } = await supabase.from('rides').insert([{
@@ -159,7 +167,7 @@ client.on('message', async (msg) => {
       }]).select().single();
 
       if (error) {
-        console.log('Ride insert error:', error.message);
+        console.log('Ride insert error:' + error.message);
         u.step = 'menu';
         return await reply('Sorry, could not post to drivers. Type 1 to try again.');
       }
@@ -167,10 +175,9 @@ client.on('message', async (msg) => {
       u.rideId = ride.id;
       await reply(`✅ Booking confirmed! Posting to drivers...\n\n${u.pickup} → ${u.destination}\n${u.km}km = $${u.total.toFixed(2)}\n\nDrivers have 2 mins to bid. I will send you the top 5 cheapest.`);
 
-      // Notify owner
-      try { await client.sendMessage(OWNER_NUMBER + '@c.us', `🚨 NEW BOOKING\nName: ${u.name}\nPhone: ${u.customerPhone}\nFrom: ${u.pickup}\nTo: ${u.destination}\n${u.km}km = $${u.total.toFixed(2)}\nRide ID: ${u.rideId}`); } catch(e){}
+      try { await client.sendMessage(OWNER_NUMBER + '@c.us', `🚨 NEW BOOKING\nName: ${u.name}\nPhone: ${u.customerPhone}\nFrom: ${u.pickup}\nTo: ${u.destination}\n${u.km}km = $${u.total.toFixed(2)}\nRide ID: ${u.rideId}`); } catch (e) {}
 
-      // --- AFTER 2 MINS: TAKE FIRST 5 PRICES FROM DRIVER WEBSITE ---
+      // AFTER 2 MINS: TAKE FIRST 5 PRICES FROM DRIVER WEBSITE
       setTimeout(async () => {
         try {
           const { data: bids } = await supabase.from('bids')
@@ -187,16 +194,16 @@ client.on('message', async (msg) => {
           u.bids = bids; u.step = 'choose_driver';
           let list = `✅ ${bids.length} Drivers Available - Cheapest First:\n\n`;
           bids.forEach((b, i) => {
-            list += `${i+1} - ${b.driver_name} - ${b.plate} - $${Number(b.price).toFixed(2)}\n`;
+            list += `${i + 1} - ${b.driver_name} - ${b.plate} - $${Number(b.price).toFixed(2)}\n`;
           });
           list += `\nReply 1, 2, 3... to choose your driver.`;
           await client.sendMessage(from, list);
-        } catch (e) { console.log('Bids fetch error:', e.message); }
-      }, 120000); // 2 mins
+        } catch (e) { console.log('Bids fetch error:' + e.message); }
+      }, 120000);
       return;
     }
 
-    // --- CUSTOMER CHOOSES DRIVER -> SEND CUSTOMER DETAILS TO THAT DRIVER ---
+    // CUSTOMER CHOOSES DRIVER -> SEND CUSTOMER DETAILS TO THAT DRIVER
     if (u.step === 'choose_driver') {
       const idx = parseInt(text) - 1;
       if (!isNaN(idx) && u.bids && u.bids[idx]) {
@@ -204,31 +211,28 @@ client.on('message', async (msg) => {
         u.step = 'menu';
         await supabase.from('rides').update({ status: 'matched', chosen_driver: chosen.driver_name }).eq('id', u.rideId);
 
-        // 1. Tell customer
         await reply(`✅ You chose ${chosen.driver_name} - ${chosen.plate}\n\n${u.pickup} → ${u.destination}\n${u.km}km = $${Number(chosen.price).toFixed(2)}\n\nDriver number: ${chosen.driver_phone}\nDriver will contact you now.\n\nType 1 for another booking.`);
 
-        // 2. Send customer details to SELECTED driver on WhatsApp
         const driverChatId = String(chosen.driver_phone).replace(/[^0-9]/g, '') + '@c.us';
         try {
           await client.sendMessage(driverChatId,
             `🚕 NEW JOB - You were chosen! - My Chauffeur Zim\n\nCustomer: ${u.name}\nCustomer Phone: ${u.customerPhone}\nCall / WhatsApp them NOW\n\nPickup: ${u.pickup}\nDestination: ${u.destination}\nDistance: ${u.km}km\nYour Price: $${Number(chosen.price).toFixed(2)}\nRide ID: ${u.rideId}\n\nPlease contact customer immediately.`
           );
-          console.log('Customer details sent to driver:', chosen.driver_name);
+          console.log('Customer details sent to driver:' + chosen.driver_name);
         } catch (e) {
-          console.log('Could not WhatsApp driver, owner must call driver:', e.message);
-          try { await client.sendMessage(OWNER_NUMBER + '@c.us', `Driver ${chosen.driver_name} ${chosen.driver_phone} was chosen for Ride ${u.rideId} but WhatsApp failed. Call driver manually. Customer: ${u.name} ${u.customerPhone}`); } catch(_){}
+          console.log('Could not WhatsApp driver:' + e.message);
+          try { await client.sendMessage(OWNER_NUMBER + '@c.us', `Driver ${chosen.driver_name} ${chosen.driver_phone} was chosen for Ride ${u.rideId} but WhatsApp failed. Call driver manually. Customer: ${u.name} ${u.customerPhone}`); } catch (_) {}
         }
         return;
       }
       return await reply(`Reply 1 to ${u.bids?.length || 5} to choose a driver.`);
     }
 
-  } catch (e) { console.log('Message error:', e.message); }
+  } catch (e) { console.log('Message error:' + e.message); }
 });
 
-// Catch TimeoutError crash - don't let bot die
-process.on('unhandledRejection', (e) => { console.log('Unhandled (ignored, bot keeps running):', e.message); });
+process.on('unhandledRejection', (e) => { console.log('Unhandled (bot keeps running):' + (e.message || e)); });
 
 console.log('Starting My Chauffeur Zim Bot - WhatsApp Web.js - Pairing Code Only...');
-console.log('Phone for pairing:', PHONE_NUMBER);
+console.log('Phone for pairing:' + PHONE_NUMBER);
 client.initialize();
