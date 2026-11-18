@@ -77,7 +77,7 @@ async function startBot() {
 
   let pairingInterval = null;
 
-  // --- PAIRING CODE - FIXED: WAIT FOR CONNECTING, SHOW FULL ERROR ---
+  // --- PAIRING CODE - FIXED: ONE CODE ONLY, NO AUTO-REFRESH ---
   if (!sock.authState.creds.registered) {
     console.log('Pairing for number:', PHONE_NUMBER);
     const askCode = async () => {
@@ -85,18 +85,18 @@ async function startBot() {
         console.log('Requesting pairing code for:', PHONE_NUMBER);
         const code = await sock.requestPairingCode(PHONE_NUMBER);
         console.log('YOUR PAIRING CODE IS:', code);
-        console.log('USE THIS LATEST CODE - OLD CODES ARE DEAD');
+        console.log('USE THIS CODE NOW - TYPE IT WITHIN 20 SECONDS');
       } catch (e) {
         console.log('Pairing error FULL:', e.message);
         console.log('Pairing error stack:', e.stack?.slice(0, 500));
       }
     };
-    // FIX: Don't ask at 5 sec, wait until Baileys says 'connecting'
     sock.ev.on('connection.update', (u) => {
       if (u.connection === 'connecting' && !pairingInterval) {
         console.log('Baileys connecting, will request code in 3 sec...');
+        // FIX: ONE CODE ONLY - no setInterval, old code was killing your code while you typed
+        pairingInterval = true;
         setTimeout(askCode, 3000);
-        pairingInterval = setInterval(askCode, 50000);
       }
     });
   }
@@ -104,12 +104,10 @@ async function startBot() {
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect } = update;
     if (connection === 'close') {
-      if (pairingInterval) clearInterval(pairingInterval);
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed, reconnecting:', shouldReconnect);
       if (shouldReconnect) startBot();
     } else if (connection === 'open') {
-      if (pairingInterval) clearInterval(pairingInterval);
       console.log('My Chauffeur Zim Bot is ready!');
     }
   });
