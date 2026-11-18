@@ -1,5 +1,4 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal'); // not used for QR, kept for safety
 
 const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '263783264675').replace(/[^0-9]/g, '');
 const users = {};
@@ -47,7 +46,6 @@ Night starts at 8pm and ends at 6am, then we go back to Day price automatically.
 Type 1 to Get Price`;
 };
 
-// --- WHATSAPP WEB.JS - PAIRING CODE ONLY, NO QR, NO BAILEYS ---
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'auth_wwebjs' }),
   puppeteer: {
@@ -58,9 +56,26 @@ const client = new Client({
 
 let pairingRequested = false;
 
-client.on('qr', (qr) => {
-  // We are NOT using QR - ignore it
-  console.log('QR received but ignored - using Pairing Code only');
+// --- FIXED: Request pairing code HERE, not in loading_screen ---
+client.on('qr', async (qr) => {
+  console.log('QR event fired - requesting Pairing Code instead...');
+  if (!pairingRequested) {
+    pairingRequested = true;
+    try {
+      const code = await client.requestPairingCode(PHONE_NUMBER);
+      console.log('======================================');
+      console.log('YOUR PAIRING CODE IS:', code);
+      console.log('WhatsApp > Linked Devices > Link with phone number');
+      console.log('Phone:', PHONE_NUMBER);
+      console.log('Type code within 20 seconds');
+      console.log('======================================');
+    } catch (e) {
+      console.log('Pairing code error:', e.message);
+      pairingRequested = false; // allow retry on next QR
+    }
+  } else {
+    console.log('Waiting for you to type pairing code...');
+  }
 });
 
 client.on('authenticated', () => {
@@ -77,32 +92,6 @@ client.on('auth_failure', (msg) => {
 
 client.on('disconnected', (reason) => {
   console.log('Disconnected:', reason);
-});
-
-// Request Pairing Code once on startup
-client.on('loading_screen', async () => {
-  if (!pairingRequested) {
-    pairingRequested = true;
-    try {
-      // Wait a bit for client to be ready to pair
-      setTimeout(async () => {
-        try {
-          const code = await client.requestPairingCode(PHONE_NUMBER);
-          console.log('======================================');
-          console.log('YOUR PAIRING CODE IS:', code);
-          console.log('Go to WhatsApp > Linked Devices > Link with phone number');
-          console.log('Type this code within 20 seconds');
-          console.log('Phone:', PHONE_NUMBER);
-          console.log('======================================');
-        } catch (e) {
-          console.log('Pairing code error:', e.message);
-          console.log('If it says already paired, just wait for READY');
-        }
-      }, 5000);
-    } catch (e) {
-      console.log('Pairing setup error:', e.message);
-    }
-  }
 });
 
 client.on('message', async (msg) => {
