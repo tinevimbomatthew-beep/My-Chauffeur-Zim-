@@ -1,1 +1,10 @@
-{"name":"my-chauffeur-zim","version":"1.0.0","main":"bot.js","scripts":{"start":"node bot.js"},"dependencies":{"@whiskeysockets/baileys":"latest","pino":"latest"}}
+{
+  "name": "my-chauffeur-zim",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "scripts": { "start": "node bot.js" },
+  "dependencies": {
+    "whatsapp-web.js": "latest",
+    "qrcode-terminal": "latest"
+  }
+}
