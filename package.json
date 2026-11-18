@@ -5,6 +5,6 @@
   "scripts": { "start": "node bot.js" },
   "dependencies": {
     "whatsapp-web.js": "latest",
-    "qrcode-terminal": "latest"
+    "@supabase/supabase-js": "latest"
   }
 }
