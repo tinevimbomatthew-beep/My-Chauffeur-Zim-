@@ -1,193 +1,183 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Chauffeur Zim - Book a Ride Bulawayo</title>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Chauffeur Zim - Book a Ride</title>
 <style>
-body{margin:0;font-family:sans-serif;background:#111;color:#fff;text-align:center;padding:0 12px 30px}
-.top{background:#E9C46A;color:#000;padding:14px;font-weight:bold;font-size:18px}
-.card{background:#222;margin:12px auto;max-width:480px;padding:14px;border-radius:14px;text-align:left}
-input,select{width:100%;padding:14px;margin:8px 0;border-radius:10px;border:none;font-size:16px;box-sizing:border-box}
-.btn{display:block;width:100%;padding:16px;border-radius:12px;border:none;font-size:18px;font-weight:bold;text-decoration:none;text-align:center;box-sizing:border-box;cursor:pointer}
-.green{background:#25D366;color:#fff}.gold{background:#E9C46A;color:#000}.dark{background:#444;color:#fff}
-.small{font-size:13px;color:#ccc}
-.pricebox{background:#E9C46A;color:#000;padding:14px;border-radius:12px;text-align:center;font-weight:bold;margin:10px 0}
-.driver{background:#333;padding:12px;border-radius:10px;margin:8px 0}
-.timer{color:#E9C46A;font-weight:bold}
-</style></head><body>
-<div class="top">🚖 MY CHAUFFEUR ZIM - BULAWAYO</div>
-<p class="small">$1.50 per km + $0.50 / $1.00 driver fee • Drivers in 60 sec • Driver keeps all</p>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+  body { background: #f4f4f4; color: #222; }
+  .top { background: #111; color: #fff; padding: 18px; text-align: center; }
+  .top h1 { font-size: 24px; }
+  .top p { color: #25D366; margin-top: 4px; font-weight: bold; }
+  .box { background: #fff; margin: 12px; padding: 16px; border-radius: 12px; }
+  h2 { font-size: 18px; margin-bottom: 10px; }
+  label { display: block; font-size: 13px; font-weight: bold; margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+  button { width: 100%; padding: 14px; border: none; border-radius: 10px; background: #25D366; color: #fff; font-size: 17px; font-weight: bold; margin-top: 14px; cursor: pointer; }
+  button:disabled { background: #999; }
+  .price-box { background: #eafff1; border: 1px solid #25D366; padding: 12px; border-radius: 10px; margin-top: 12px; font-size: 15px; line-height: 1.6; display: none; }
+  .msg { margin-top: 12px; padding: 12px; border-radius: 8px; display: none; font-size: 14px; line-height: 1.5; }
+  .ok { background: #eafff1; display: block; }
+  .err { background: #ffe5e5; display: block; }
+  .prices { font-size: 14px; line-height: 1.8; }
+  .prices b { color: #111; }
+  .links { text-align: center; margin: 10px; }
+  .links a { color: #111; font-weight: bold; }
+</style>
+</head>
+<body>
 
-<div class="card">
-<h2 style="margin:0">Book A Ride</h2>
-<label class="small">Your Name</label>
-<input id="name" placeholder="Your Name">
-<label class="small">Your Phone</label>
-<input id="phone" placeholder="Your Phone e.g. 078...">
-<label class="small">Pickup</label>
-<input id="pickup" placeholder="Pickup e.g. Hillside">
-<label class="small">Dropoff</label>
-<input id="dropoff" placeholder="Dropoff e.g. CBD">
-<label class="small">Ride Type</label>
-<select id="rideType" onchange="updatePrice()">
-  <option value="In-City">In-City (under 15km)</option>
-  <option value="Outside City">Outside City (15km+)</option>
-</select>
-<label class="small">Distance (km) - If you don't know, put 5</label>
-<input id="km" type="number" value="5" min="1" oninput="updatePrice()">
-<label class="small">When?</label>
-<select id="when"><option>Now</option><option>Later Today</option><option>Tomorrow</option></select>
-<input id="date" type="date">
-
-<div class="pricebox" id="priceBox">
-  Fare: $7.50 + Fee: $0.50 = Total: $8.00<br>
-  <span style="font-size:13px;font-weight:normal">Driver keeps ALL $8.00</span>
+<div class="top">
+  <h1>🚕 My Chauffeur Zim</h1>
+  <p>WhatsApp: 0783 264 675</p>
 </div>
 
-<button class="btn gold" onclick="bookWeb()">BOOK RIDE - Find Drivers (60 Sec)</button>
-<div id="result"></div>
-<div id="driversList"></div>
+<div class="box">
+  <h2>💰 Price List</h2>
+  <div class="prices">
+    <b>$1.00 per kilometer + $0.50 driver fee = $1.50 per km</b><br>
+    5km = $7.50<br>
+    10km = $15.00<br>
+    15km = $22.50<br>
+    20km = $30.00<br>
+    No hidden fees. Same price day and night.
+  </div>
 </div>
 
-<div class="card">
-<h2 style="margin:0">Or Book on WhatsApp</h2>
-<p class="small">Fastest way - Chat to us directly, bot will calculate same price</p>
-<a class="btn green" href="https://wa.me/263783264675?text=Hi%20My%20Chauffeur%20Zim%20I%20want%20a%20ride">📱 WhatsApp Us - 0783264675</a>
+<div class="box">
+  <h2>Book a Ride 🚕</h2>
+  <form id="bookForm">
+    <label>Your Name</label>
+    <input id="name" required placeholder="e.g. Tino">
+
+    <label>Your Phone (WhatsApp)</label>
+    <input id="phone" required placeholder="0783264675">
+
+    <label>Pickup Location</label>
+    <input id="pickup" required placeholder="e.g. Bulawayo CBD">
+
+    <label>Destination</label>
+    <input id="destination" required placeholder="e.g. Hillside">
+
+    <label>City</label>
+    <select id="city">
+      <option>Harare</option>
+      <option selected>Bulawayo</option>
+      <option>Mutare</option>
+      <option>Gweru</option>
+      <option>Masvingo</option>
+      <option>Kwekwe</option>
+      <option>Victoria Falls</option>
+    </select>
+
+    <label>Distance (km) - we auto-calculate, or type it</label>
+    <input id="km" type="number" step="0.1" required placeholder="e.g. 10">
+
+    <div class="price-box" id="priceBox"></div>
+
+    <button type="submit" id="btn">Confirm Booking - Send to WhatsApp</button>
+  </form>
+  <div class="msg" id="msg"></div>
 </div>
 
-<div class="card">
-<h2 style="margin:0">For Drivers</h2>
-<a class="btn dark" href="driver.html">I Am A Driver - Go Online</a>
-<p class="small">Drivers: Go Online, see rides, BID. You keep 100% + your fee. No commission.</p>
+<div class="links">
+  <a href="driver.html">Are you a driver? Register here →</a>
 </div>
-<p class="small">My Chauffeur Zim • 0783264675 • Bulawayo</p>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-let sb=null; try{ sb=window.supabase.createClient("https://mogkiebjvlifeybvsoe.supabase.co","sb_publishable_Ahk3owY4S6SWC7klW9ArRw_TaQIho5f"); }catch(e){}
+  // --- PUT YOUR KEYS HERE ---
+  const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// === FINAL PRICING: $1.50 per km, driver adds fee, keeps ALL ===
-function calcFare(km){
-  km = Number(km) || 0;
-  if(km < 1) km = 1;
-  return (km * 1.50);
-}
-function calcFee(km, rideType){
-  km = Number(km) || 0;
-  let type = (rideType || '').toLowerCase();
-  if(type.includes('outside') || type.includes('out') || km >= 15) return 1.00;
-  return 0.50;
-}
-function calcTotal(km, rideType){
-  return calcFare(km) + calcFee(km, rideType);
-}
+  const PER_KM = 1.50;
+  const kmInput = document.getElementById('km');
+  const priceBox = document.getElementById('priceBox');
+  const msg = document.getElementById('msg');
 
-function updatePrice(){
-  let km = Number(document.getElementById('km').value) || 5;
-  let rideType = document.getElementById('rideType').value;
-  let fare = calcFare(km);
-  let fee = calcFee(km, rideType);
-  let total = fare + fee;
-  document.getElementById('priceBox').innerHTML = `Fare: $${fare.toFixed(2)} + Fee: $${fee.toFixed(2)} = Total: $${total.toFixed(2)}<br><span style="font-size:13px;font-weight:normal">Driver keeps ALL $${total.toFixed(2)} • ${km}km • ${rideType}</span>`;
-  return {fare, fee, total};
-}
-
-let currentRideId = null;
-let countdownTimer = null;
-
-async function bookWeb(){
-  const name=document.getElementById('name').value.trim();
-  const phone=document.getElementById('phone').value.trim();
-  const pickup=document.getElementById('pickup').value.trim();
-  const dropoff=document.getElementById('dropoff').value.trim();
-  const km = Number(document.getElementById('km').value) || 5;
-  const rideType = document.getElementById('rideType').value;
-  const when = document.getElementById('when').value;
-  const date = document.getElementById('date').value;
-  if(!pickup||!dropoff){ alert('Put pickup + dropoff'); return; }
-  if(!phone){ alert('Put your phone so driver can call you'); return; }
-
-  let {fare, fee, total} = updatePrice();
-
-  document.getElementById('result').innerHTML=`<p>✅ Ride posted! <br>Fare $${fare.toFixed(2)} + Fee $${fee.toFixed(2)} = <b>Total $${total.toFixed(2)}</b><br><br><span class="timer" id="countdown">⏱️ 60s left - Waiting for first 5 drivers to BID...</span></p>`;
-  document.getElementById('driversList').innerHTML = '';
-
-  if(sb){
-    try{
-      const {data} = await sb.from('rides').insert([{
-        customer_name: name,
-        customer_phone: phone,
-        pickup, dropoff, km,
-        ride_type: rideType,
-        price: fare,
-        driver_fee: fee,
-        total_price: total,
-        datetime: date + ' ' + when,
-        city: 'Bulawayo',
-        status: 'waiting'
-      }]).select().single();
-      if(data) currentRideId = data.id;
-    }catch(e){ console.log(e); }
+  function showPrice() {
+    const km = parseFloat(kmInput.value);
+    if (!km || km <= 0) { priceBox.style.display = 'none'; return; }
+    const total = (km * PER_KM).toFixed(2);
+    priceBox.style.display = 'block';
+    priceBox.innerHTML = `Distance: <b>${km}km</b><br>Pricing: $1.00/km + $0.50 fee = $1.50/km<br><b>Total: $${total}</b>`;
   }
+  kmInput.addEventListener('input', showPrice);
 
-  // 60 sec countdown
-  let left = 60;
-  clearInterval(countdownTimer);
-  countdownTimer = setInterval(()=>{
-    left--;
-    let el = document.getElementById('countdown');
-    if(el) el.innerText = `⏱️ ${left}s left - Waiting for first 5 drivers to BID...`;
-    if(left <= 0){
-      clearInterval(countdownTimer);
-      loadDrivers();
+  // Auto-calculate distance when pickup/destination change
+  async function autoKm() {
+    const pickup = document.getElementById('pickup').value.trim();
+    const dest = document.getElementById('destination').value.trim();
+    const city = document.getElementById('city').value;
+    if (!pickup || !dest) return;
+    try {
+      async function geo(place) {
+        const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place + ', ' + city + ', Zimbabwe')}&limit=1`);
+        const d = await r.json();
+        return d[0] ? { lat: d[0].lat, lon: d[0].lon } : null;
+      }
+      const a = await geo(pickup);
+      const b = await geo(dest);
+      if (!a || !b) return;
+      const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`);
+      const d = await r.json();
+      if (d.routes && d.routes[0]) {
+        kmInput.value = (d.routes[0].distance / 1000).toFixed(1);
+        showPrice();
+      }
+    } catch (e) {}
+  }
+  document.getElementById('destination').addEventListener('change', autoKm);
+
+  document.getElementById('bookForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btn');
+    btn.disabled = true; btn.textContent = 'Sending...';
+    msg.className = 'msg'; msg.style.display = 'none';
+
+    const name = document.getElementById('name').value.trim();
+    const phoneRaw = document.getElementById('phone').value.trim();
+    const phone = phoneRaw.replace(/[^0-9]/g, '');
+    // Normalize to 263...
+    let fullPhone = phone;
+    if (phone.startsWith('0')) fullPhone = '263' + phone.slice(1);
+    if (phone.length === 9) fullPhone = '263' + phone;
+
+    const pickup = document.getElementById('pickup').value.trim();
+    const destination = document.getElementById('destination').value.trim();
+    const city = document.getElementById('city').value;
+    const km = parseFloat(kmInput.value);
+    const total = (km * PER_KM).toFixed(2);
+
+    // --- THIS IS WHAT THE BOT LOOKS FOR ---
+    const { data, error } = await supabase.from('bookings').insert([{
+      customer_name: name,
+      phone: fullPhone,
+      pickup: pickup,
+      destination: destination,
+      city: city,
+      distance_km: km,
+      price: total,
+      status: 'pending',
+      source: 'website',
+      whatsapp_sent: false
+    }]).select().single();
+
+    if (error) {
+      msg.className = 'msg err'; msg.style.display = 'block';
+      msg.textContent = 'Error: ' + error.message + ' - Check Supabase keys / bookings table.';
+      btn.disabled = false; btn.textContent = 'Confirm Booking - Send to WhatsApp';
+      return;
     }
-  }, 1000);
 
-  // Also check every 5 sec so drivers show as they bid
-  let checkCount = 0;
-  let poll = setInterval(async ()=>{
-    checkCount++;
-    if(checkCount > 12){ clearInterval(poll); return; }
-    await loadDrivers(true);
-  }, 5000);
-}
-
-async function loadDrivers(silent){
-  if(!sb || !currentRideId) return;
-  const {data: bids} = await sb.from('bids').select('*').eq('ride_id', currentRideId).order('created_at',{ascending:true}).limit(5);
-  if(!bids || !bids.length){
-    if(!silent) document.getElementById('driversList').innerHTML = '<p class="small">No drivers bid in 60 seconds. Try again or WhatsApp us.</p>';
-    return;
-  }
-  // Get driver details for each bid
-  let html = `<h3>Top ${bids.length} Drivers - Pick 1</h3>`;
-  for(let i=0;i<bids.length;i++){
-    let b = bids[i];
-    let drvName = 'Driver ' + (i+1);
-    let car = '', plate = '';
-    try{
-      const {data: drv} = await sb.from('drivers').select('name,car,car_detail,plate').eq('phone', b.driver_phone).single();
-      if(drv){ drvName = drv.name; car = drv.car + ' ' + (drv.car_detail||''); plate = drv.plate; }
-    }catch(e){}
-    // DO NOT show driver phone until customer picks
-    html += `<div class="driver"><b>${i+1}. ${drvName}</b><br><span class="small">${car} • Plate: ${plate}</span><br><span class="small">Total: $${Number(b.total_price || b.ride_price || 0).toFixed(2)} - Driver keeps all</span><br><br><button class="btn green" onclick="pickDriver('${b.driver_phone}','${drvName.replace(/'/g,"")}','${car}','${plate}')">PICK THIS DRIVER</button></div>`;
-  }
-  document.getElementById('driversList').innerHTML = html;
-  let el = document.getElementById('countdown');
-  if(el) el.innerText = `✅ ${bids.length} driver(s) bid! Pick 1 below.`;
-}
-
-async function pickDriver(driverPhone, driverName, car, plate){
-  if(!sb || !currentRideId) return;
-  await sb.from('rides').update({ status: 'assigned', chosen_driver: driverPhone }).eq('id', currentRideId);
-  // Notify admin/driver via WhatsApp - we send to admin who forwards number to chosen driver ONLY
-  let pickup = document.getElementById('pickup').value;
-  let dropoff = document.getElementById('dropoff').value;
-  let phone = document.getElementById('phone').value;
-  let name = document.getElementById('name').value;
-  let {total} = updatePrice();
-  let msg = `I picked driver ${driverName} (${plate}) for ride ${pickup} to ${dropoff}. My name: ${name} My phone: ${phone} Total: $${total.toFixed(2)}. Please connect us.`;
-  document.getElementById('driversList').innerHTML = `<p>✅ <b>You picked ${driverName}</b><br>${car} • ${plate}<br>Total to pay driver: $${total.toFixed(2)}<br><br>Driver will call you on ${phone} shortly. We sent your number ONLY to this driver.</p><br><a class="btn green" href="https://wa.me/263783264675?text=${encodeURIComponent(msg)}">Confirm on WhatsApp</a>`;
-  window.open('https://wa.me/263783264675?text='+encodeURIComponent(msg), '_blank');
-}
-
-updatePrice();
-</script></body></html>
+    msg.className = 'msg ok'; msg.style.display = 'block';
+    msg.innerHTML = `✅ Booking saved! Booking ID: ${data.id}<br>From: ${pickup} → ${destination}<br>${km}km = $${total}<br><br>We are sending this to WhatsApp now. Our team / bot will WhatsApp you on ${fullPhone} shortly. You can also WhatsApp us on 0783 264 675.`;
+    btn.disabled = false; btn.textContent = 'Confirm Booking - Send to WhatsApp';
+    document.getElementById('bookForm').reset();
+    priceBox.style.display = 'none';
+  });
+</script>
+</body>
+</html>
