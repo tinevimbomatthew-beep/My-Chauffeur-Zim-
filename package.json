@@ -4,6 +4,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",
     "@whiskeysockets/baileys": "^6.7.0",
-    "pino": "^1.0.0"
+    "pino": "^1.0.0",
+    "ws": "^8.18.0"
   }
 }
