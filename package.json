@@ -1,7 +1,15 @@
+
 {
   "name": "my-chauffeur-zim",
+  "version": "1.0.0",
+  "description": "My Chauffeur Zim WhatsApp Booking Bot",
   "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "@whiskeysockets/baileys": "6.7.18",
