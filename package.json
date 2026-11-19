@@ -1,12 +1,9 @@
 {
   "name": "my-chauffeur-zim",
-  "version": "1.0.0",
   "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
   "dependencies": {
-    "@whiskeysockets/baileys": "6.7.18",
-    "@supabase/supabase-js": "latest",
-    "pino": "latest",
-    "ws": "latest"
+    "@supabase/supabase-js": "^2.0.0",
+    "@whiskeysockets/baileys": "^6.7.0",
+    "pino": "^1.0.0"
   }
 }
