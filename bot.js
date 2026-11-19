@@ -1,4 +1,5 @@
 global.WebSocket = require('ws');
+const fs = require('fs');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const pino = require('pino');
@@ -49,9 +50,9 @@ Type 1 to Book`;
 };
 
 async function startBot() {
-  
   const { version } = await fetchLatestBaileysVersion();
-const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_baileys');
+  const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_baileys');
+
   const sock = makeWASocket({
     version,
     auth: state,
@@ -98,12 +99,17 @@ const { state, saveCreds } = await useMultiFileAuthState('/tmp/auth_baileys');
     if (connection === 'close') {
       if (pairingTimer) clearInterval(pairingTimer);
       pairingStarted = false;
-      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed, reconnecting:' + shouldReconnect);
-      if (shouldReconnect) {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401;
+      console.log('Connection closed, statusCode:' + statusCode + ' loggedOut:' + isLoggedOut);
+
+      if (isLoggedOut) {
+        console.log('DEAD SESSION - deleting /tmp/auth_baileys and restarting fresh...');
+        try { fs.rmSync('/tmp/auth_baileys', { recursive: true, force: true }); } catch (e) {}
         setTimeout(() => startBot(), 3000);
       } else {
-        console.log('LOGGED OUT - delete auth_baileys volume in Railway and redeploy');
+        console.log('Reconnecting in 3 sec...');
+        setTimeout(() => startBot(), 3000);
       }
     } else if (connection === 'open') {
       console.log('My Chauffeur Zim Bot is ready!');
