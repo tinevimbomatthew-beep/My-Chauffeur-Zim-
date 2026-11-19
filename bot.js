@@ -1,15 +1,17 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
+const pino = require('pino');
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
-const BOT_NUMBER = '263783264675'; // your bot number, no +
+const BOT_NUMBER = '263783264675';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const PER_KM = 1.50;
 
 let sock;
 let pairingRequested = false;
-let userState = {}; // phone -> { step, pickup, destination, city, km }
+let userState = {};
 
 async function start() {
   const { version } = await fetchLatestBaileysVersion();
@@ -18,7 +20,7 @@ async function start() {
   sock = makeWASocket({
     version,
     auth: state,
-    logger: { level: 'silent' },
+    logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     browser: ['My Chauffeur Zim', 'Chrome', '1.0'],
   });
@@ -36,30 +38,26 @@ async function start() {
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       console.log('Connection closed, code:', code);
-
       if (code === 405) {
         console.log('405 - Pairing blocked. STOP. Wait 10 mins, delete auth, try once.');
-        return; // DO NOT RETRY - this was causing your loop
+        return;
       }
       if (code === DisconnectReason.loggedOut) {
         console.log('Logged out - need re-pair');
         return;
       }
-      // Only reconnect if we were connected before
       console.log('Reconnecting in 5s...');
       setTimeout(start, 5000);
     }
 
-    // Pairing - ONLY ONCE
     if (!state.creds.registered && !pairingRequested) {
       pairingRequested = true;
-      // Wait for socket to be ready
       await new Promise(r => setTimeout(r, 4000));
       try {
         const code = await sock.requestPairingCode(BOT_NUMBER);
         console.log('====================================');
         console.log('PAIRING CODE:', code);
-        console.log('Enter this in WhatsApp > Linked Devices > Link with phone number');
+        console.log('WhatsApp > Linked Devices > Link with phone number');
         console.log('You have 20 seconds!');
         console.log('====================================');
       } catch (e) {
@@ -69,7 +67,6 @@ async function start() {
     }
   });
 
-  // Handle incoming WhatsApp messages
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const m of messages) {
       if (!m.message || m.key.fromMe) continue;
@@ -80,7 +77,6 @@ async function start() {
     }
   });
 
-  // Poll Supabase for website bookings every 15s
   setInterval(checkWebsiteBookings, 15000);
 }
 
@@ -136,7 +132,6 @@ async function handleMessage(from, text) {
     if (error) { await send(from, `Error saving: ${error.message}`); return; }
     delete userState[from];
     await send(from, `✅ Booking saved! ID: ${data.id}\n\n${st.pickup} → ${st.destination}\n${st.km}km = $${st.total}\n\nA driver will contact you soon.`);
-    // Notify owner
     await send(BOT_NUMBER, `🚕 NEW WHATSAPP BOOKING #${data.id}\n${st.pickup} → ${st.destination}\n${st.km}km = $${st.total}\nCustomer: ${from}`);
     return;
   }
