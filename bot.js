@@ -1,258 +1,906 @@
-// My Chauffeur Zim - Production Bot - Never Die Version
-process.on('uncaughtException', (e) => console.log('⚠️ Uncaught, kept alive:', e.message));
-process.on('unhandledRejection', (e) => console.log('⚠️ Rejection, kept alive:', e?.message || e));
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+'use strict';
+
+// ============================================
+// MY CHAUFFEUR ZIM - PRODUCTION WHATSAPP BOT
+// ============================================
+
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion
+} = require('@whiskeysockets/baileys');
+
 const { createClient } = require('@supabase/supabase-js');
 const pino = require('pino');
+const http = require('http');
+
+// ============================================
+// CONFIGURATION
+// ============================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
-const BOT_NUMBER = process.env.BOT_NUMBER || '263783264675';
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.log('❌ MISSING SUPABASE_URL or SUPABASE_ANON_KEY in Railway Variables - bot will still stay alive and retry');
-}
+const BOT_NUMBER = String(
+  process.env.BOT_NUMBER || '263783264675'
+).replace(/\D/g, '');
 
-const supabase = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const PORT = Number(process.env.PORT || 3000);
+
+const AUTH_FOLDER = '/app/auth_baileys';
+
 const PER_KM = 1.50;
 
+const supabase =
+  SUPABASE_URL && SUPABASE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_KEY)
+    : null;
+
+// ============================================
+// GLOBAL STATE
+// ============================================
+
 let sock = null;
-let pairingRequested = false;
-let userState = {};
-let reconnectAttempts = 0;
 let isStarting = false;
-let lastPairingAt = 0;
+
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
 let heartbeatInterval = null;
+let bookingPollInterval = null;
+
+let pairingCooldownUntil = 0;
+let loggedOut = false;
+
+const userState = {};
+
+const logger = pino({ level: 'silent' });
+
+// ============================================
+// PHONE NUMBER VALIDATION
+// ============================================
+
+function validateBotNumber() {
+  if (!/^263\d{9}$/.test(BOT_NUMBER)) {
+    throw new Error(
+      'Invalid BOT_NUMBER. Use Zimbabwe format: 263XXXXXXXXX'
+    );
+  }
+}
+
+// ============================================
+// MAIN CONNECTION
+// ============================================
 
 async function start() {
-  if (isStarting) return;
+  if (isStarting || sock || loggedOut) return;
+
   isStarting = true;
+
+  let currentSock = null;
+
   try {
-    console.log(`🚀 Starting bot... attempt ${reconnectAttempts + 1}`);
-    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
-    const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+    validateBotNumber();
 
-    sock = makeWASocket({
-      version,
+    console.log('====================================');
+    console.log('🚕 MY CHAUFFEUR ZIM');
+    console.log('Starting WhatsApp connection...');
+    console.log('Attempt:', reconnectAttempts + 1);
+    console.log('====================================');
+
+    // Get latest compatible WhatsApp version
+    let version;
+
+    try {
+      const latest = await fetchLatestBaileysVersion();
+      version = latest.version;
+      console.log('Baileys version:', version.join('.'));
+    } catch (e) {
+      console.log('Version lookup failed; using library default:', e.message);
+    }
+
+    // Load persistent authentication
+    const { state, saveCreds } =
+      await useMultiFileAuthState(AUTH_FOLDER);
+
+    currentSock = makeWASocket({
+      ...(version ? { version } : {}),
+
       auth: state,
-      logger: pino({ level: 'silent' }),
+
+      logger,
+
       printQRInTerminal: false,
-      browser: ['My Chauffeur Zim', 'Chrome', '1.0'],
+
+      browser: [
+        'My Chauffeur Zim',
+        'Chrome',
+        '1.0.0'
+      ],
+
       syncFullHistory: false,
+
       markOnlineOnConnect: true,
+
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 10000,
+
+      keepAliveIntervalMs: 15000,
+
       retryRequestDelayMs: 2000,
-      maxMsgRetryCount: 5,
+
+      maxMsgRetryCount: 5
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    sock = currentSock;
 
-    sock.ev.on('connection.update', async (u) => {
-      const { connection, lastDisconnect } = u;
-      console.log('Connection:', connection);
+    // Save authentication credentials
+    currentSock.ev.on('creds.update', saveCreds);
 
-      if (connection === 'open') {
-        console.log('✅ CONNECTED - Bot is online');
-        pairingRequested = false;
-        reconnectAttempts = 0;
-        isStarting = false;
-        startHeartbeat();
-      }
+    // ========================================
+    // CONNECTION EVENTS
+    // ========================================
 
-      if (connection === 'close') {
-        isStarting = false;
-        stopHeartbeat();
-        const code = lastDisconnect?.error?.output?.statusCode;
-        const reason = lastDisconnect?.error?.message || 'unknown';
-        console.log(`Closed, code: ${code}, reason: ${reason}`);
+    let pairingStarted = false;
 
-        // 405 = WhatsApp rate limit - WAIT, don't hammer
-        if (code === 405) {
-          console.log('⏸️ 405 - Rate limited. Sleeping 10 mins, NOT retrying pairing.');
-          pairingRequested = true; // block pairing
-          setTimeout(() => { pairingRequested = false; console.log('405 cooldown over, can try again'); }, 10 * 60 * 1000);
-          // Keep process alive, try reconnect in 10 mins without pairing
-          setTimeout(() => safeRestart(), 10 * 60 * 1000);
-          return;
+    currentSock.ev.on(
+      'connection.update',
+      async (update) => {
+
+        if (currentSock !== sock) return;
+
+        const {
+          connection,
+          lastDisconnect,
+          qr
+        } = update;
+
+        console.log('WhatsApp connection:', connection || 'updating');
+
+        // ------------------------------------
+        // REQUEST PAIRING CODE ONLY ONCE
+        // ------------------------------------
+
+        if (
+          !state.creds.registered &&
+          !pairingStarted &&
+          (connection === 'connecting' || qr)
+        ) {
+
+          pairingStarted = true;
+
+          const remainingCooldown =
+            pairingCooldownUntil - Date.now();
+
+          if (remainingCooldown > 0) {
+            console.log(
+              'Pairing cooldown active. Waiting:',
+              Math.ceil(remainingCooldown / 1000),
+              'seconds'
+            );
+
+            return;
+          }
+
+          try {
+            // Give WhatsApp time to establish the connection
+            await new Promise(resolve =>
+              setTimeout(resolve, 4000)
+            );
+
+            if (
+              currentSock !== sock ||
+              state.creds.registered
+            ) {
+              return;
+            }
+
+            console.log('Requesting WhatsApp pairing code...');
+
+            const code =
+              await currentSock.requestPairingCode(BOT_NUMBER);
+
+            console.log('');
+            console.log('====================================');
+            console.log('🚕 MY CHAUFFEUR ZIM');
+            console.log('WHATSAPP PAIRING CODE:');
+            console.log('');
+            console.log(code);
+            console.log('');
+            console.log('Open WhatsApp Business:');
+            console.log('Settings > Linked Devices');
+            console.log('Link with phone number instead');
+            console.log('====================================');
+            console.log('');
+
+          } catch (e) {
+            console.log('Pairing error:', e.message);
+            console.log('No automatic pairing-code loop will run.');
+          }
         }
 
-        if (code === DisconnectReason.loggedOut) {
-          console.log('Logged out - delete auth_baileys in Railway Volume and re-pair once');
-          // Stay alive, don't crash loop
-          setTimeout(() => safeRestart(), 60000);
-          return;
-        }
+        // ------------------------------------
+        // SUCCESSFUL CONNECTION
+        // ------------------------------------
 
-        // Normal disconnect - exponential backoff, max 60s
-        reconnectAttempts++;
-        const delay = Math.min(5000 * reconnectAttempts, 60000);
-        console.log(`Reconnecting in ${delay/1000}s...`);
-        setTimeout(() => safeRestart(), delay);
-      }
+        if (connection === 'open') {
 
-      // Pairing - ONLY ONCE per 5 mins, NEVER loop
-      if (!state.creds.registered && !pairingRequested) {
-        const now = Date.now();
-        if (now - lastPairingAt < 5 * 60 * 1000) {
-          console.log('Pairing cooldown, skipping');
-          return;
-        }
-        pairingRequested = true;
-        lastPairingAt = now;
-        await new Promise(r => setTimeout(r, 4000));
-        try {
-          const code = await sock.requestPairingCode(BOT_NUMBER);
+          console.log('');
           console.log('====================================');
-          console.log('PAIRING CODE:', code);
-          console.log('WhatsApp > Linked Devices > Link with phone number');
-          console.log('You have 20 seconds!');
+          console.log('✅ WHATSAPP CONNECTED SUCCESSFULLY');
+          console.log('🚕 MY CHAUFFEUR ZIM IS ONLINE');
           console.log('====================================');
-          // Allow retry after 60s if it fails, but not immediate loop
-          setTimeout(() => { pairingRequested = false; }, 60000);
-        } catch (e) {
-          console.log('Pairing error:', e.message);
-          setTimeout(() => { pairingRequested = false; }, 60000);
+          console.log('');
+
+          reconnectAttempts = 0;
+
+          startHeartbeat();
+        }
+
+        // ------------------------------------
+        // CONNECTION CLOSED
+        // ------------------------------------
+
+        if (connection === 'close') {
+
+          stopHeartbeat();
+
+          const statusCode =
+            lastDisconnect?.error?.output?.statusCode;
+
+          const reason =
+            lastDisconnect?.error?.message || 'Unknown';
+
+          console.log('WhatsApp disconnected.');
+          console.log('Status:', statusCode);
+          console.log('Reason:', reason);
+
+          if (currentSock === sock) {
+            sock = null;
+          }
+
+          // Logged out: do not keep requesting codes
+          if (statusCode === DisconnectReason.loggedOut) {
+
+            loggedOut = true;
+
+            console.log('');
+            console.log('❌ WHATSAPP SESSION LOGGED OUT');
+            console.log('A fresh authentication is required.');
+            console.log('Check your Railway auth_baileys volume.');
+            console.log('');
+
+            return;
+          }
+
+          // Rate limit protection
+          if (statusCode === 405) {
+
+            console.log(
+              '⚠️ WhatsApp rate limit detected. Waiting 10 minutes.'
+            );
+
+            pairingCooldownUntil =
+              Date.now() + (10 * 60 * 1000);
+
+            scheduleRestart(10 * 60 * 1000);
+
+            return;
+          }
+
+          // Normal reconnection
+          reconnectAttempts++;
+
+          const delay = Math.min(
+            5000 * reconnectAttempts,
+            60000
+          );
+
+          console.log(
+            'Reconnecting in',
+            delay / 1000,
+            'seconds'
+          );
+
+          scheduleRestart(delay);
         }
       }
-    });
+    );
 
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      try {
-        for (const m of messages) {
-          if (!m.message || m.key.fromMe) continue;
-          const from = m.key.remoteJid?.replace('@s.whatsapp.net', '');
-          if (!from) continue;
-          const text = m.message.conversation || m.message.extendedTextMessage?.text || m.message.imageMessage?.caption || '';
-          if (!text) continue;
-          await handleMessage(from, text.trim());
+    // ========================================
+    // INCOMING WHATSAPP MESSAGES
+    // ========================================
+
+    currentSock.ev.on(
+      'messages.upsert',
+      async ({ messages }) => {
+
+        if (currentSock !== sock) return;
+
+        for (const message of messages) {
+
+          try {
+
+            if (!message.message) continue;
+            if (message.key.fromMe) continue;
+
+            const jid = message.key.remoteJid;
+
+            if (!jid || jid.endsWith('@g.us')) continue;
+
+            const from = jid.endsWith('@s.whatsapp.net')
+              ? jid.replace('@s.whatsapp.net', '')
+              : jid;
+
+            const content = message.message;
+
+            const text =
+              content.conversation ||
+              content.extendedTextMessage?.text ||
+              content.imageMessage?.caption ||
+              content.videoMessage?.caption ||
+              content.documentMessage?.caption ||
+              '';
+
+            if (!text.trim()) continue;
+
+            await handleMessage(from, text.trim());
+
+          } catch (e) {
+            console.log('Message error:', e.message);
+          }
         }
-      } catch (e) { console.log('Message handler error, kept alive:', e.message); }
-    });
+      }
+    );
 
-    sock.ev.on('messages.update', () => {});
     isStarting = false;
 
   } catch (e) {
-    console.log('Start error, will retry in 10s:', e.message);
+
+    console.log('START ERROR:', e.message);
+
+    if (currentSock && sock === currentSock) {
+      sock = null;
+    }
+
     isStarting = false;
-    setTimeout(() => safeRestart(), 10000);
+
+    scheduleRestart(10000);
   }
+}
+
+// ============================================
+// RECONNECTION MANAGER
+// ============================================
+
+function scheduleRestart(delay) {
+
+  if (loggedOut || reconnectTimer) return;
+
+  reconnectTimer = setTimeout(() => {
+
+    reconnectTimer = null;
+
+    safeRestart();
+
+  }, delay);
 }
 
 function safeRestart() {
-  try { if (sock) sock.end?.(); } catch {}
-  sock = null;
-  isStarting = false;
+
+  if (loggedOut || isStarting || sock) return;
+
+  console.log('Restarting WhatsApp connection...');
+
   start();
 }
 
+// ============================================
+// HEARTBEAT
+// ============================================
+
 function startHeartbeat() {
+
   stopHeartbeat();
+
   heartbeatInterval = setInterval(() => {
-    console.log(`💓 Heartbeat - alive ${new Date().toISOString()} - reconnectAttempts: ${reconnectAttempts}`);
-    // Keep Railway alive, prevent idle kill
+
+    console.log(
+      '💓 My Chauffeur Zim alive:',
+      new Date().toISOString()
+    );
+
     if (sock) {
-      try { sock.sendPresenceUpdate?.('available'); } catch {}
+      sock.sendPresenceUpdate('available')
+        .catch(() => {});
     }
+
   }, 30000);
-  // Poll website bookings every 15s inside heartbeat loop
-  setInterval(checkWebsiteBookings, 15000);
+
+  bookingPollInterval = setInterval(
+    checkWebsiteBookings,
+    15000
+  );
+
+  // Initial website booking check
+  checkWebsiteBookings();
 }
 
 function stopHeartbeat() {
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
+
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
+
+  if (bookingPollInterval) {
+    clearInterval(bookingPollInterval);
+  }
+
   heartbeatInterval = null;
+  bookingPollInterval = null;
 }
 
-async function handleMessage(from, text) {
-  try {
-    const lower = text.toLowerCase();
-    const st = userState[from] || { step: 'start' };
-
-    if (['hi','hello','menu','start','hey'].includes(lower)) {
-      st.step = 'pickup'; userState[from] = st;
-      await send(from, `🚕 *My Chauffeur Zim*\n\nWelcome! Let's book your ride.\n\nPrice: $1.50 per km ($1.00/km + $0.50 fee)\n\nWhere is your *pickup*? e.g. Bulawayo CBD`);
-      return;
-    }
-    if (st.step === 'pickup') {
-      st.pickup = text; st.step = 'destination'; userState[from] = st;
-      await send(from, `Pickup: ${text}\n\nWhere is your *destination*?`);
-      return;
-    }
-    if (st.step === 'destination') {
-      st.destination = text; st.step = 'km'; userState[from] = st;
-      await send(from, `Destination: ${text}\n\nHow many *km*? Send a number e.g. 10`);
-      return;
-    }
-    if (st.step === 'km') {
-      const km = parseFloat(text);
-      if (!km) { await send(from, `Please send a number for km, e.g. 10`); return; }
-      const total = (km * PER_KM).toFixed(2);
-      st.km = km; st.total = total; st.step = 'confirm'; userState[from] = st;
-      await send(from, `📋 *Confirm Booking*\n\nFrom: ${st.pickup}\nTo: ${st.destination}\nDistance: ${km}km\nTotal: $${total}\n\nReply *YES* to confirm, or *NO* to cancel.`);
-      return;
-    }
-    if (st.step === 'confirm' && lower === 'yes') {
-      if (!supabase) { await send(from, `System busy, try again in a minute.`); return; }
-      const { data, error } = await supabase.from('bookings').insert([{
-        customer_name: from, phone: from, pickup: st.pickup, destination: st.destination,
-        city: 'Bulawayo', distance_km: st.km, price: st.total,
-        status: 'pending', source: 'whatsapp', whatsapp_sent: true
-      }]).select().single();
-      if (error) { await send(from, `Error saving: ${error.message}`); return; }
-      delete userState[from];
-      await send(from, `✅ Booking saved! ID: ${data.id}\n\n${st.pickup} → ${st.destination}\n${st.km}km = $${st.total}\n\nA driver will contact you soon.`);
-      await send(BOT_NUMBER, `🚕 NEW WHATSAPP BOOKING #${data.id}\n${st.pickup} → ${st.destination}\n${st.km}km = $${st.total}\nCustomer: ${from}`);
-      return;
-    }
-    if (lower === 'no' && st.step === 'confirm') {
-      delete userState[from];
-      await send(from, `Cancelled. Send *HI* to start again.`);
-      return;
-    }
-    await send(from, `Send *HI* to book a ride 🚕`);
-  } catch (e) { console.log('handleMessage error:', e.message); }
-}
+// ============================================
+// SEND WHATSAPP MESSAGE
+// ============================================
 
 async function send(to, text) {
+
   try {
-    if (!sock) return;
-    const jid = to.includes('@') ? to : to + '@s.whatsapp.net';
+
+    if (!sock) return false;
+
+    const jid = String(to).includes('@')
+      ? String(to)
+      : String(to).replace(/\D/g, '') + '@s.whatsapp.net';
+
     await sock.sendMessage(jid, { text });
-  } catch (e) { console.log('Send error (not fatal):', e.message); }
+
+    return true;
+
+  } catch (e) {
+
+    console.log('Message sending error:', e.message);
+
+    return false;
+  }
 }
+
+// ============================================
+// CUSTOMER BOOKING SYSTEM
+// ============================================
+
+async function handleMessage(from, text) {
+
+  try {
+
+    const lower = text.toLowerCase();
+
+    const st = userState[from] || {
+      step: 'start'
+    };
+
+    // START MENU
+    if (['hi', 'hello', 'menu', 'start', 'hey'].includes(lower)) {
+
+      st.step = 'pickup';
+
+      userState[from] = st;
+
+      await send(
+        from,
+        `🚕 *MY CHAUFFEUR ZIM*
+
+Welcome! Let's book your ride.
+
+💵 Price: $1.50 per km
+
+Where is your *pickup*?
+
+Example: Bulawayo CBD`
+      );
+
+      return;
+    }
+
+    // PICKUP
+    if (st.step === 'pickup') {
+
+      st.pickup = text;
+
+      st.step = 'destination';
+
+      userState[from] = st;
+
+      await send(
+        from,
+        `📍 Pickup: ${text}
+
+Where is your *destination*?`
+      );
+
+      return;
+    }
+
+    // DESTINATION
+    if (st.step === 'destination') {
+
+      st.destination = text;
+
+      st.step = 'km';
+
+      userState[from] = st;
+
+      await send(
+        from,
+        `📍 Destination: ${text}
+
+How many kilometres is the journey?
+
+Send a number, for example: 10`
+      );
+
+      return;
+    }
+
+    // DISTANCE
+    if (st.step === 'km') {
+
+      const km = Number(text);
+
+      if (!Number.isFinite(km) || km <= 0) {
+
+        await send(
+          from,
+          'Please enter a valid distance greater than zero. Example: 10'
+        );
+
+        return;
+      }
+
+      const total = (km * PER_KM).toFixed(2);
+
+      st.km = km;
+      st.total = total;
+      st.step = 'confirm';
+
+      userState[from] = st;
+
+      await send(
+        from,
+        `📋 *CONFIRM YOUR BOOKING*
+
+📍 From: ${st.pickup}
+
+🏁 To: ${st.destination}
+
+📏 Distance: ${km} km
+
+💵 Total: $${total}
+
+Reply *YES* to confirm.
+
+Reply *NO* to cancel.`
+      );
+
+      return;
+    }
+
+    // CONFIRM BOOKING
+    if (st.step === 'confirm' && lower === 'yes') {
+
+      if (!supabase) {
+
+        await send(
+          from,
+          'Our booking system is temporarily unavailable. Please try again shortly.'
+        );
+
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('bookings')
+        .insert([{
+
+          customer_name: from,
+          phone: from,
+
+          pickup: st.pickup,
+          destination: st.destination,
+
+          city: 'Bulawayo',
+
+          distance_km: st.km,
+          price: st.total,
+
+          status: 'pending',
+          source: 'whatsapp',
+          whatsapp_sent: true
+
+        }])
+        .select()
+        .single();
+
+      if (error) {
+
+        console.log('Supabase booking error:', error.message);
+
+        await send(
+          from,
+          'We could not save your booking. Please try again.'
+        );
+
+        return;
+      }
+
+      delete userState[from];
+
+      await send(
+        from,
+        `✅ *BOOKING CONFIRMED*
+
+Thank you for choosing My Chauffeur Zim!
+
+Booking ID: ${data.id}
+
+📍 ${st.pickup} → ${st.destination}
+
+📏 ${st.km} km
+
+💵 $${st.total}
+
+A driver will contact you shortly.
+
+Thank you! 🚕`
+      );
+
+      // Notify administrator
+      await send(
+        BOT_NUMBER,
+        `🚕 *NEW WHATSAPP BOOKING*
+
+Booking ID: ${data.id}
+
+Pickup: ${st.pickup}
+
+Destination: ${st.destination}
+
+Distance: ${st.km} km
+
+Price: $${st.total}
+
+Customer: ${from}
+
+Status: Pending`
+      );
+
+      return;
+    }
+
+    // CANCEL BOOKING
+    if (st.step === 'confirm' && lower === 'no') {
+
+      delete userState[from];
+
+      await send(
+        from,
+        '❌ Booking cancelled.\n\nSend HI whenever you want to book another ride.'
+      );
+
+      return;
+    }
+
+    // DEFAULT RESPONSE
+    await send(
+      from,
+      'Welcome to My Chauffeur Zim! 🚕\n\nSend *HI* to start booking your ride.'
+    );
+
+  } catch (e) {
+
+    console.log('Booking handler error:', e.message);
+  }
+}
+
+// ============================================
+// WEBSITE BOOKING NOTIFICATIONS
+// ============================================
 
 async function checkWebsiteBookings() {
+
   try {
+
     if (!sock || !supabase) return;
-    const { data, error } = await supabase.from('bookings').select('*').eq('source', 'website').eq('whatsapp_sent', false).eq('status', 'pending');
-    if (error || !data?.length) return;
-    for (const b of data) {
-      await send(BOT_NUMBER, `🌐 *NEW WEBSITE BOOKING #${b.id}*\n\n👤 ${b.customer_name} - ${b.phone}\n📍 ${b.pickup} → ${b.destination}\n🏙️ ${b.city}\n📏 ${b.distance_km}km = $${b.price}`);
-      await send(b.phone, `✅ *My Chauffeur Zim* - Booking #${b.id} received!\n\n${b.pickup} → ${b.destination}\n${b.distance_km}km = $${b.price}\n\nA driver will WhatsApp you shortly.`);
-      await supabase.from('bookings').update({ whatsapp_sent: true }).eq('id', b.id);
-      console.log('Website booking notified:', b.id);
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('source', 'website')
+      .eq('whatsapp_sent', false)
+      .eq('status', 'pending');
+
+    if (error) {
+
+      console.log('Website booking query error:', error.message);
+
+      return;
     }
-  } catch (e) { console.log('checkWebsiteBookings error:', e.message); }
+
+    if (!data || data.length === 0) return;
+
+    for (const booking of data) {
+
+      const adminMessage =
+        `🌐 *NEW WEBSITE BOOKING*
+
+Booking ID: ${booking.id}
+
+Customer: ${booking.customer_name}
+
+Phone: ${booking.phone}
+
+Pickup: ${booking.pickup}
+
+Destination: ${booking.destination}
+
+City: ${booking.city}
+
+Distance: ${booking.distance_km} km
+
+Price: $${booking.price}
+
+Status: Pending`;
+
+      const customerMessage =
+        `✅ *MY CHAUFFEUR ZIM*
+
+Your booking has been received!
+
+Booking ID: ${booking.id}
+
+${booking.pickup} → ${booking.destination}
+
+Distance: ${booking.distance_km} km
+
+Total: $${booking.price}
+
+A driver will contact you shortly.
+
+Thank you for choosing us! 🚕`;
+
+      const adminSent = await send(
+        BOT_NUMBER,
+        adminMessage
+      );
+
+      const customerSent = await send(
+        booking.phone,
+        customerMessage
+      );
+
+      if (adminSent && customerSent) {
+
+        const { error: updateError } = await supabase
+          .from('bookings')
+          .update({ whatsapp_sent: true })
+          .eq('id', booking.id);
+
+        if (updateError) {
+          console.log(
+            'Booking notification update error:',
+            updateError.message
+          );
+        } else {
+          console.log(
+            'Website booking notifications sent:',
+            booking.id
+          );
+        }
+
+      } else {
+
+        console.log(
+          'Website notification incomplete:',
+          booking.id
+        );
+      }
+    }
+
+  } catch (e) {
+
+    console.log('Website booking checker error:', e.message);
+  }
 }
 
-// Keep process alive even if Railway sends SIGTERM
-process.on('SIGTERM', () => { console.log('SIGTERM received, staying alive...'); });
-process.on('SIGINT', () => { console.log('SIGINT received, staying alive...'); });
+// ============================================
+// RAILWAY HEALTH CHECK SERVER
+// ============================================
 
-// Health check - Railway needs a port or it kills you. This keeps it alive.
-const http = require('http');
-http.createServer((req, res) => { res.writeHead(200); res.end('Bot alive - ' + new Date().toISOString()); }).listen(process.env.PORT || 3000, () => console.log('Health server on', process.env.PORT || 3000));
+const server = http.createServer((req, res) => {
 
-console.log('Starting My Chauffeur Zim bot...');
+  res.writeHead(200, {
+    'Content-Type': 'text/plain'
+  });
+
+  res.end(
+    'My Chauffeur Zim Bot Alive - ' +
+    new Date().toISOString()
+  );
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+
+  console.log('Health server listening on port:', PORT);
+});
+
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+
+function shutdown(signal) {
+
+  console.log(signal, 'received. Shutting down safely.');
+
+  stopHeartbeat();
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+  }
+
+  try {
+    if (sock) {
+      sock.end(new Error('Application shutting down'));
+    }
+  } catch (e) {
+    console.log('Socket shutdown:', e.message);
+  }
+
+  server.close(() => {
+    process.exit(0);
+  });
+
+  setTimeout(() => process.exit(1), 10000)
+    .unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('uncaughtException', (error) => {
+
+  console.error('UNCAUGHT EXCEPTION:', error);
+
+  // Let Railway restart an unstable process
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (error) => {
+
+  console.error('UNHANDLED REJECTION:', error);
+});
+
+// ============================================
+// START APPLICATION
+// ============================================
+
+console.log('');
+console.log('🚕 Starting My Chauffeur Zim...');
+console.log('WhatsApp number:', BOT_NUMBER);
+console.log('Supabase:', supabase ? 'Configured' : 'Missing');
+console.log('');
+
 start();
 
-// Self-watchdog: if socket dies silently, restart it
+// Watchdog
 setInterval(() => {
-  if (!sock && !isStarting) {
-    console.log('Watchdog: socket missing, restarting...');
+
+  if (!sock && !isStarting && !loggedOut && !reconnectTimer) {
+
+    console.log('Watchdog: restarting missing socket');
+
     safeRestart();
   }
+
 }, 60000);
