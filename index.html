@@ -21,7 +21,6 @@
   .ok { background: #eafff1; display: block; }
   .err { background: #ffe5e5; display: block; }
   .prices { font-size: 14px; line-height: 1.8; }
-  .prices b { color: #111; }
   .links { text-align: center; margin: 10px; }
   .links a { color: #111; font-weight: bold; }
 </style>
@@ -50,16 +49,12 @@
   <form id="bookForm">
     <label>Your Name</label>
     <input id="name" required placeholder="e.g. Tino">
-
     <label>Your Phone (WhatsApp)</label>
     <input id="phone" required placeholder="0783264675">
-
     <label>Pickup Location</label>
     <input id="pickup" required placeholder="e.g. Bulawayo CBD">
-
     <label>Destination</label>
     <input id="destination" required placeholder="e.g. Hillside">
-
     <label>City</label>
     <select id="city">
       <option>Harare</option>
@@ -70,12 +65,9 @@
       <option>Kwekwe</option>
       <option>Victoria Falls</option>
     </select>
-
     <label>Distance (km) - we auto-calculate, or type it</label>
     <input id="km" type="number" step="0.1" required placeholder="e.g. 10">
-
     <div class="price-box" id="priceBox"></div>
-
     <button type="submit" id="btn">Confirm Booking - Send to WhatsApp</button>
   </form>
   <div class="msg" id="msg"></div>
@@ -87,9 +79,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  // --- PUT YOUR KEYS HERE ---
-  const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+  const SUPABASE_URL = 'https://mogkiebjivlifeybvsoe.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vZ2tpZWJqaXZsaWZleWJ2c29lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQzMjk5OTgsImV4cCI6MjEwOTkwNTk5OH0.3qTk-JlwdFdj6bsSRBaVYLHzbs9H7C4erqIbIsHgaNM';
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   const PER_KM = 1.50;
@@ -106,7 +97,6 @@
   }
   kmInput.addEventListener('input', showPrice);
 
-  // Auto-calculate distance when pickup/destination change
   async function autoKm() {
     const pickup = document.getElementById('pickup').value.trim();
     const dest = document.getElementById('destination').value.trim();
@@ -140,7 +130,6 @@
     const name = document.getElementById('name').value.trim();
     const phoneRaw = document.getElementById('phone').value.trim();
     const phone = phoneRaw.replace(/[^0-9]/g, '');
-    // Normalize to 263...
     let fullPhone = phone;
     if (phone.startsWith('0')) fullPhone = '263' + phone.slice(1);
     if (phone.length === 9) fullPhone = '263' + phone;
@@ -151,7 +140,6 @@
     const km = parseFloat(kmInput.value);
     const total = (km * PER_KM).toFixed(2);
 
-    // --- THIS IS WHAT THE BOT LOOKS FOR ---
     const { data, error } = await supabase.from('bookings').insert([{
       customer_name: name,
       phone: fullPhone,
@@ -167,17 +155,17 @@
 
     if (error) {
       msg.className = 'msg err'; msg.style.display = 'block';
-      msg.textContent = 'Error: ' + error.message + ' - Check Supabase keys / bookings table.';
+      msg.textContent = 'Error: ' + error.message;
       btn.disabled = false; btn.textContent = 'Confirm Booking - Send to WhatsApp';
       return;
     }
 
     msg.className = 'msg ok'; msg.style.display = 'block';
-    msg.innerHTML = `✅ Booking saved! Booking ID: ${data.id}<br>From: ${pickup} → ${destination}<br>${km}km = $${total}<br><br>We are sending this to WhatsApp now. Our team / bot will WhatsApp you on ${fullPhone} shortly. You can also WhatsApp us on 0783 264 675.`;
+    msg.innerHTML = `✅ Booking saved! Booking ID: ${data.id}<br>From: ${pickup} → ${destination}<br>${km}km = $${total}<br><br>We are sending this to WhatsApp now. Our team will WhatsApp you on ${fullPhone} shortly.`;
     btn.disabled = false; btn.textContent = 'Confirm Booking - Send to WhatsApp';
     document.getElementById('bookForm').reset();
     priceBox.style.display = 'none';
   });
 </script>
 </body>
-</html>
+         </html>
