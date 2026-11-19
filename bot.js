@@ -1,7 +1,5 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
-const pino = require('pino');
-
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 const BOT_NUMBER = '263783264675'; // your bot number, no +
@@ -20,7 +18,7 @@ async function start() {
   sock = makeWASocket({
     version,
     auth: state,
-    logger: pino({ level: 'silent' }),
+    logger: { level: 'silent' },
     printQRInTerminal: false,
     browser: ['My Chauffeur Zim', 'Chrome', '1.0'],
   });
