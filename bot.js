@@ -2,7 +2,7 @@ global.WebSocket = require('ws');
 process.on('uncaughtException', e => console.log('Kept alive:', e.message));
 process.on('unhandledRejection', e => console.log('Kept alive:', e?.message || e));
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { state, saveCreds } = await useMultiFileAuthState('auth_baileys_v2');
 const { createClient } = require('@supabase/supabase-js');
 const pino = require('pino');
 const http = require('http');
