@@ -1,906 +1,692 @@
 
-'use strict';
+// MY CHAUFFEUR ZIM — WHATSAPP BOOKING BOT V2
+// Environment variables:
+// SUPABASE_URL
+// SUPABASE_SERVICE_ROLE_KEY
+// PHONE_NUMBER
+// OWNER_NUMBER
+// BID_WINDOW_SECONDS (optional, default 90)
 
-// ============================================
-// MY CHAUFFEUR ZIM - PRODUCTION WHATSAPP BOT
-// ============================================
+global.WebSocket = require('ws');
 
 const {
   default: makeWASocket,
   useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion
+  DisconnectReason
 } = require('@whiskeysockets/baileys');
 
 const { createClient } = require('@supabase/supabase-js');
 const pino = require('pino');
-const http = require('http');
+const fs = require('fs');
 
-// ============================================
-// CONFIGURATION
-// ============================================
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '').replace(/\D/g, '');
+const OWNER_NUMBER = String(process.env.OWNER_NUMBER || '').replace(/\D/g, '');
 
-const BOT_NUMBER = String(
-  process.env.BOT_NUMBER || '263783264675'
-).replace(/\D/g, '');
+const BID_WINDOW_SECONDS = Number(process.env.BID_WINDOW_SECONDS || 90);
+const AUTH_DIR = 'auth_baileys';
 
-const PORT = Number(process.env.PORT || 3000);
+const users = new Map();
+const offeredBookings = new Set();
 
-const AUTH_FOLDER = '/app/auth_baileys';
+const WELCOME = `👋 Welcome to My Chauffeur Zim!
 
-const PER_KM = 1.50;
+How can we help you today?
 
-const supabase =
-  SUPABASE_URL && SUPABASE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_KEY)
-    : null;
+1️⃣ Book a Ride 🚕
+2️⃣ View Prices 💰
+3️⃣ Support 📞
 
-// ============================================
-// GLOBAL STATE
-// ============================================
+Type MENU to return here.`;
 
-let sock = null;
-let isStarting = false;
+function money(amount) {
+  return '$' + Number(amount).toFixed(2);
+}
 
-let reconnectAttempts = 0;
-let reconnectTimer = null;
+// ZIMBABWE TIME-BASED PRICING
+function getRates() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Harare',
+    hour: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(new Date());
 
-let heartbeatInterval = null;
-let bookingPollInterval = null;
+  const hour = Number(parts.find(p => p.type === 'hour').value);
 
-let pairingCooldownUntil = 0;
-let loggedOut = false;
-
-const userState = {};
-
-const logger = pino({ level: 'silent' });
-
-// ============================================
-// PHONE NUMBER VALIDATION
-// ============================================
-
-function validateBotNumber() {
-  if (!/^263\d{9}$/.test(BOT_NUMBER)) {
-    throw new Error(
-      'Invalid BOT_NUMBER. Use Zimbabwe format: 263XXXXXXXXX'
-    );
+  if (hour >= 20 || hour < 5) {
+    return {
+      night: true,
+      fare: 1.50,
+      driverFee: 1.00
+    };
   }
+
+  return {
+    night: false,
+    fare: 1.00,
+    driverFee: 0.50
+  };
 }
 
-// ============================================
-// MAIN CONNECTION
-// ============================================
-
-async function start() {
-  if (isStarting || sock || loggedOut) return;
-
-  isStarting = true;
-
-  let currentSock = null;
-
-  try {
-    validateBotNumber();
-
-    console.log('====================================');
-    console.log('🚕 MY CHAUFFEUR ZIM');
-    console.log('Starting WhatsApp connection...');
-    console.log('Attempt:', reconnectAttempts + 1);
-    console.log('====================================');
-
-    // Get latest compatible WhatsApp version
-    let version;
-
-    try {
-      const latest = await fetchLatestBaileysVersion();
-      version = latest.version;
-      console.log('Baileys version:', version.join('.'));
-    } catch (e) {
-      console.log('Version lookup failed; using library default:', e.message);
-    }
-
-    // Load persistent authentication
-    const { state, saveCreds } =
-      await useMultiFileAuthState(AUTH_FOLDER);
-
-    currentSock = makeWASocket({
-      ...(version ? { version } : {}),
-
-      auth: state,
-
-      logger,
-
-      printQRInTerminal: false,
-
-      browser: [
-        'My Chauffeur Zim',
-        'Chrome',
-        '1.0.0'
-      ],
-
-      syncFullHistory: false,
-
-      markOnlineOnConnect: true,
-
-      connectTimeoutMs: 60000,
-
-      keepAliveIntervalMs: 15000,
-
-      retryRequestDelayMs: 2000,
-
-      maxMsgRetryCount: 5
-    });
-
-    sock = currentSock;
-
-    // Save authentication credentials
-    currentSock.ev.on('creds.update', saveCreds);
-
-    // ========================================
-    // CONNECTION EVENTS
-    // ========================================
-
-    let pairingStarted = false;
-
-    currentSock.ev.on(
-      'connection.update',
-      async (update) => {
-
-        if (currentSock !== sock) return;
-
-        const {
-          connection,
-          lastDisconnect,
-          qr
-        } = update;
-
-        console.log('WhatsApp connection:', connection || 'updating');
-
-        // ------------------------------------
-        // REQUEST PAIRING CODE ONLY ONCE
-        // ------------------------------------
-
-        if (
-          !state.creds.registered &&
-          !pairingStarted &&
-          (connection === 'connecting' || qr)
-        ) {
-
-          pairingStarted = true;
-
-          const remainingCooldown =
-            pairingCooldownUntil - Date.now();
-
-          if (remainingCooldown > 0) {
-            console.log(
-              'Pairing cooldown active. Waiting:',
-              Math.ceil(remainingCooldown / 1000),
-              'seconds'
-            );
-
-            return;
-          }
-
-          try {
-            // Give WhatsApp time to establish the connection
-            await new Promise(resolve =>
-              setTimeout(resolve, 4000)
-            );
-
-            if (
-              currentSock !== sock ||
-              state.creds.registered
-            ) {
-              return;
-            }
-
-            console.log('Requesting WhatsApp pairing code...');
-
-            const code =
-              await currentSock.requestPairingCode(BOT_NUMBER);
-
-            console.log('');
-            console.log('====================================');
-            console.log('🚕 MY CHAUFFEUR ZIM');
-            console.log('WHATSAPP PAIRING CODE:');
-            console.log('');
-            console.log(code);
-            console.log('');
-            console.log('Open WhatsApp Business:');
-            console.log('Settings > Linked Devices');
-            console.log('Link with phone number instead');
-            console.log('====================================');
-            console.log('');
-
-          } catch (e) {
-            console.log('Pairing error:', e.message);
-            console.log('No automatic pairing-code loop will run.');
-          }
-        }
-
-        // ------------------------------------
-        // SUCCESSFUL CONNECTION
-        // ------------------------------------
-
-        if (connection === 'open') {
-
-          console.log('');
-          console.log('====================================');
-          console.log('✅ WHATSAPP CONNECTED SUCCESSFULLY');
-          console.log('🚕 MY CHAUFFEUR ZIM IS ONLINE');
-          console.log('====================================');
-          console.log('');
-
-          reconnectAttempts = 0;
-
-          startHeartbeat();
-        }
-
-        // ------------------------------------
-        // CONNECTION CLOSED
-        // ------------------------------------
-
-        if (connection === 'close') {
-
-          stopHeartbeat();
-
-          const statusCode =
-            lastDisconnect?.error?.output?.statusCode;
-
-          const reason =
-            lastDisconnect?.error?.message || 'Unknown';
-
-          console.log('WhatsApp disconnected.');
-          console.log('Status:', statusCode);
-          console.log('Reason:', reason);
-
-          if (currentSock === sock) {
-            sock = null;
-          }
-
-          // Logged out: do not keep requesting codes
-          if (statusCode === DisconnectReason.loggedOut) {
-
-            loggedOut = true;
-
-            console.log('');
-            console.log('❌ WHATSAPP SESSION LOGGED OUT');
-            console.log('A fresh authentication is required.');
-            console.log('Check your Railway auth_baileys volume.');
-            console.log('');
-
-            return;
-          }
-
-          // Rate limit protection
-          if (statusCode === 405) {
-
-            console.log(
-              '⚠️ WhatsApp rate limit detected. Waiting 10 minutes.'
-            );
-
-            pairingCooldownUntil =
-              Date.now() + (10 * 60 * 1000);
-
-            scheduleRestart(10 * 60 * 1000);
-
-            return;
-          }
-
-          // Normal reconnection
-          reconnectAttempts++;
-
-          const delay = Math.min(
-            5000 * reconnectAttempts,
-            60000
-          );
-
-          console.log(
-            'Reconnecting in',
-            delay / 1000,
-            'seconds'
-          );
-
-          scheduleRestart(delay);
-        }
-      }
-    );
-
-    // ========================================
-    // INCOMING WHATSAPP MESSAGES
-    // ========================================
-
-    currentSock.ev.on(
-      'messages.upsert',
-      async ({ messages }) => {
-
-        if (currentSock !== sock) return;
-
-        for (const message of messages) {
-
-          try {
-
-            if (!message.message) continue;
-            if (message.key.fromMe) continue;
-
-            const jid = message.key.remoteJid;
-
-            if (!jid || jid.endsWith('@g.us')) continue;
-
-            const from = jid.endsWith('@s.whatsapp.net')
-              ? jid.replace('@s.whatsapp.net', '')
-              : jid;
-
-            const content = message.message;
-
-            const text =
-              content.conversation ||
-              content.extendedTextMessage?.text ||
-              content.imageMessage?.caption ||
-              content.videoMessage?.caption ||
-              content.documentMessage?.caption ||
-              '';
-
-            if (!text.trim()) continue;
-
-            await handleMessage(from, text.trim());
-
-          } catch (e) {
-            console.log('Message error:', e.message);
-          }
-        }
-      }
-    );
-
-    isStarting = false;
-
-  } catch (e) {
-
-    console.log('START ERROR:', e.message);
-
-    if (currentSock && sock === currentSock) {
-      sock = null;
-    }
-
-    isStarting = false;
-
-    scheduleRestart(10000);
-  }
+function calculatePrice(km) {
+  const rates = getRates();
+
+  return {
+    night: rates.night,
+    minimum: Number((km * rates.fare).toFixed(2)),
+    maximum: Number((km * (rates.fare + rates.driverFee)).toFixed(2))
+  };
 }
 
-// ============================================
-// RECONNECTION MANAGER
-// ============================================
+// AUTOMATIC DISTANCE CALCULATION
+async function geocode(place, city) {
+  const url = new URL('https://nominatim.openstreetmap.org/search');
 
-function scheduleRestart(delay) {
-
-  if (loggedOut || reconnectTimer) return;
-
-  reconnectTimer = setTimeout(() => {
-
-    reconnectTimer = null;
-
-    safeRestart();
-
-  }, delay);
-}
-
-function safeRestart() {
-
-  if (loggedOut || isStarting || sock) return;
-
-  console.log('Restarting WhatsApp connection...');
-
-  start();
-}
-
-// ============================================
-// HEARTBEAT
-// ============================================
-
-function startHeartbeat() {
-
-  stopHeartbeat();
-
-  heartbeatInterval = setInterval(() => {
-
-    console.log(
-      '💓 My Chauffeur Zim alive:',
-      new Date().toISOString()
-    );
-
-    if (sock) {
-      sock.sendPresenceUpdate('available')
-        .catch(() => {});
-    }
-
-  }, 30000);
-
-  bookingPollInterval = setInterval(
-    checkWebsiteBookings,
-    15000
+  url.searchParams.set(
+    'q',
+    `${place}, ${city}, Zimbabwe`
   );
 
-  // Initial website booking check
-  checkWebsiteBookings();
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('limit', '1');
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'MyChauffeurZim/2.0'
+    }
+  });
+
+  if (!response.ok) throw new Error('Geocoding failed');
+
+  const data = await response.json();
+
+  if (!data.length) return null;
+
+  return {
+    lat: data[0].lat,
+    lon: data[0].lon
+  };
 }
 
-function stopHeartbeat() {
-
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-  }
-
-  if (bookingPollInterval) {
-    clearInterval(bookingPollInterval);
-  }
-
-  heartbeatInterval = null;
-  bookingPollInterval = null;
-}
-
-// ============================================
-// SEND WHATSAPP MESSAGE
-// ============================================
-
-async function send(to, text) {
-
+async function getDistanceKm(pickup, destination, city) {
   try {
+    const from = await geocode(pickup, city);
 
-    if (!sock) return false;
+    if (!from) return null;
 
-    const jid = String(to).includes('@')
-      ? String(to)
-      : String(to).replace(/\D/g, '') + '@s.whatsapp.net';
+    // Respect Nominatim's public service request rate.
+    await new Promise(resolve => setTimeout(resolve, 1100));
 
-    await sock.sendMessage(jid, { text });
+    const to = await geocode(destination, city);
 
-    return true;
+    if (!to) return null;
 
-  } catch (e) {
+    const url =
+      `https://router.project-osrm.org/route/v1/driving/` +
+      `${from.lon},${from.lat};${to.lon},${to.lat}?overview=false`;
 
-    console.log('Message sending error:', e.message);
+    const response = await fetch(url);
 
-    return false;
-  }
-}
+    if (!response.ok) return null;
 
-// ============================================
-// CUSTOMER BOOKING SYSTEM
-// ============================================
+    const data = await response.json();
 
-async function handleMessage(from, text) {
+    if (!data.routes || !data.routes[0]) return null;
 
-  try {
-
-    const lower = text.toLowerCase();
-
-    const st = userState[from] || {
-      step: 'start'
-    };
-
-    // START MENU
-    if (['hi', 'hello', 'menu', 'start', 'hey'].includes(lower)) {
-
-      st.step = 'pickup';
-
-      userState[from] = st;
-
-      await send(
-        from,
-        `🚕 *MY CHAUFFEUR ZIM*
-
-Welcome! Let's book your ride.
-
-💵 Price: $1.50 per km
-
-Where is your *pickup*?
-
-Example: Bulawayo CBD`
-      );
-
-      return;
-    }
-
-    // PICKUP
-    if (st.step === 'pickup') {
-
-      st.pickup = text;
-
-      st.step = 'destination';
-
-      userState[from] = st;
-
-      await send(
-        from,
-        `📍 Pickup: ${text}
-
-Where is your *destination*?`
-      );
-
-      return;
-    }
-
-    // DESTINATION
-    if (st.step === 'destination') {
-
-      st.destination = text;
-
-      st.step = 'km';
-
-      userState[from] = st;
-
-      await send(
-        from,
-        `📍 Destination: ${text}
-
-How many kilometres is the journey?
-
-Send a number, for example: 10`
-      );
-
-      return;
-    }
-
-    // DISTANCE
-    if (st.step === 'km') {
-
-      const km = Number(text);
-
-      if (!Number.isFinite(km) || km <= 0) {
-
-        await send(
-          from,
-          'Please enter a valid distance greater than zero. Example: 10'
-        );
-
-        return;
-      }
-
-      const total = (km * PER_KM).toFixed(2);
-
-      st.km = km;
-      st.total = total;
-      st.step = 'confirm';
-
-      userState[from] = st;
-
-      await send(
-        from,
-        `📋 *CONFIRM YOUR BOOKING*
-
-📍 From: ${st.pickup}
-
-🏁 To: ${st.destination}
-
-📏 Distance: ${km} km
-
-💵 Total: $${total}
-
-Reply *YES* to confirm.
-
-Reply *NO* to cancel.`
-      );
-
-      return;
-    }
-
-    // CONFIRM BOOKING
-    if (st.step === 'confirm' && lower === 'yes') {
-
-      if (!supabase) {
-
-        await send(
-          from,
-          'Our booking system is temporarily unavailable. Please try again shortly.'
-        );
-
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('bookings')
-        .insert([{
-
-          customer_name: from,
-          phone: from,
-
-          pickup: st.pickup,
-          destination: st.destination,
-
-          city: 'Bulawayo',
-
-          distance_km: st.km,
-          price: st.total,
-
-          status: 'pending',
-          source: 'whatsapp',
-          whatsapp_sent: true
-
-        }])
-        .select()
-        .single();
-
-      if (error) {
-
-        console.log('Supabase booking error:', error.message);
-
-        await send(
-          from,
-          'We could not save your booking. Please try again.'
-        );
-
-        return;
-      }
-
-      delete userState[from];
-
-      await send(
-        from,
-        `✅ *BOOKING CONFIRMED*
-
-Thank you for choosing My Chauffeur Zim!
-
-Booking ID: ${data.id}
-
-📍 ${st.pickup} → ${st.destination}
-
-📏 ${st.km} km
-
-💵 $${st.total}
-
-A driver will contact you shortly.
-
-Thank you! 🚕`
-      );
-
-      // Notify administrator
-      await send(
-        BOT_NUMBER,
-        `🚕 *NEW WHATSAPP BOOKING*
-
-Booking ID: ${data.id}
-
-Pickup: ${st.pickup}
-
-Destination: ${st.destination}
-
-Distance: ${st.km} km
-
-Price: $${st.total}
-
-Customer: ${from}
-
-Status: Pending`
-      );
-
-      return;
-    }
-
-    // CANCEL BOOKING
-    if (st.step === 'confirm' && lower === 'no') {
-
-      delete userState[from];
-
-      await send(
-        from,
-        '❌ Booking cancelled.\n\nSend HI whenever you want to book another ride.'
-      );
-
-      return;
-    }
-
-    // DEFAULT RESPONSE
-    await send(
-      from,
-      'Welcome to My Chauffeur Zim! 🚕\n\nSend *HI* to start booking your ride.'
+    return Number(
+      (data.routes[0].distance / 1000).toFixed(1)
     );
 
-  } catch (e) {
-
-    console.log('Booking handler error:', e.message);
+  } catch (error) {
+    console.log('Distance error:', error.message);
+    return null;
   }
 }
 
-// ============================================
-// WEBSITE BOOKING NOTIFICATIONS
-// ============================================
+function phoneFromJid(jid) {
+  return String(jid).split('@')[0].split(':')[0].replace(/\D/g, '');
+}
 
-async function checkWebsiteBookings() {
+async function reply(sock, jid, text) {
+  return sock.sendMessage(jid, { text });
+}
+
+async function notifyOwner(sock, text) {
+  if (!OWNER_NUMBER) return;
 
   try {
+    await sock.sendMessage(
+      OWNER_NUMBER + '@s.whatsapp.net',
+      { text }
+    );
+  } catch (error) {
+    console.log('Owner notification:', error.message);
+  }
+}
 
-    if (!sock || !supabase) return;
+function getText(message) {
+  const m = message.message || {};
+
+  return (
+    m.conversation ||
+    m.extendedTextMessage?.text ||
+    m.imageMessage?.caption ||
+    ''
+  ).trim();
+}
+
+// BOOKING FLOW
+async function handleMessage(sock, msg) {
+  if (!msg.message || msg.key.fromMe) return;
+
+  const jid = msg.key.remoteJid;
+
+  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return;
+
+  const body = getText(msg);
+
+  if (!body) return;
+
+  const text = body.toLowerCase();
+
+  let u = users.get(jid) || { step: 'menu' };
+
+  if (['hi', 'hello', 'start', 'menu'].includes(text)) {
+    users.set(jid, { step: 'menu' });
+    return reply(sock, jid, WELCOME);
+  }
+
+  if (text === 'cancel') {
+    if (u.bookingId) {
+      await supabase
+        .from('bookings')
+        .update({ status: 'cancelled' })
+        .eq('id', u.bookingId)
+        .in('status', ['open', 'bidding']);
+    }
+
+    users.set(jid, { step: 'menu' });
+
+    return reply(sock, jid, 'Booking cancelled. Type 1 to book again.');
+  }
+
+  if (u.step === 'menu') {
+    if (text === '1') {
+      u = { step: 'pickup' };
+      users.set(jid, u);
+
+      return reply(
+        sock,
+        jid,
+        '🚕 Let us book your ride!\n\nWhere should we pick you up?'
+      );
+    }
+
+    if (text === '2') {
+      return reply(
+        sock,
+        jid,
+        `💰 MY CHAUFFEUR ZIM PRICES
+
+DAY: 5AM–8PM
+Minimum: $1.00 per km
+Maximum: $1.50 per km
+
+NIGHT: 8PM–5AM
+Minimum: $1.50 per km
+Maximum: $2.50 per km
+
+Minimum = fare only.
+Maximum = fare plus driver fee.
+
+The actual driver offer is shown before you select.
+
+Type 1 to book.`
+      );
+    }
+
+    if (text === '3') {
+      return reply(
+        sock,
+        jid,
+        '📞 Support\n\nCall / WhatsApp: 0783 264 675'
+      );
+    }
+
+    return reply(sock, jid, WELCOME);
+  }
+
+  if (u.step === 'pickup') {
+    u.pickup = body;
+    u.step = 'destination';
+
+    return reply(
+      sock,
+      jid,
+      `Pickup: ${u.pickup}\n\nWhere are you going?`
+    );
+  }
+
+  if (u.step === 'destination') {
+    u.destination = body;
+    u.step = 'city';
+
+    return reply(
+      sock,
+      jid,
+      `Destination: ${u.destination}\n\nWhich city is this trip in?`
+    );
+  }
+
+  if (u.step === 'city') {
+    u.city = body;
+    u.step = 'calculating';
+
+    await reply(sock, jid, '📍 Calculating driving distance...');
+
+    const km = await getDistanceKm(
+      u.pickup,
+      u.destination,
+      u.city
+    );
+
+    if (!km || km <= 0) {
+      u.step = 'manual_distance';
+
+      return reply(
+        sock,
+        jid,
+        'Could not automatically find the route.\n\nPlease enter the distance in kilometres, e.g. 10.'
+      );
+    }
+
+    u.km = km;
+    u.prices = calculatePrice(km);
+    u.step = 'name';
+
+    return reply(
+      sock,
+      jid,
+      `📍 ROUTE FOUND!
+
+From: ${u.pickup}
+To: ${u.destination}
+City: ${u.city}
+
+Distance: ${km} km
+
+Minimum fare: ${money(u.prices.minimum)}
+Maximum fare: ${money(u.prices.maximum)}
+
+What is your full name?`
+    );
+  }
+
+  if (u.step === 'manual_distance') {
+    const km = Number(body);
+
+    if (!Number.isFinite(km) || km <= 0 || km > 1000) {
+      return reply(sock, jid, 'Please enter a valid distance, e.g. 10.');
+    }
+
+    u.km = Number(km.toFixed(1));
+    u.prices = calculatePrice(u.km);
+    u.step = 'name';
+
+    return reply(sock, jid, 'What is your full name?');
+  }
+
+  if (u.step === 'name') {
+    if (body.length < 2) {
+      return reply(sock, jid, 'Please enter your full name.');
+    }
+
+    u.name = body;
+    u.step = 'review';
+
+    return reply(
+      sock,
+      jid,
+      `🧾 RIDE SUMMARY
+
+Name: ${u.name}
+Pickup: ${u.pickup}
+Destination: ${u.destination}
+City: ${u.city}
+Distance: ${u.km} km
+
+Minimum: ${money(u.prices.minimum)}
+Maximum: ${money(u.prices.maximum)}
+
+Reply YES to send your request to drivers.`
+    );
+  }
+
+  if (u.step === 'review') {
+    if (text !== 'yes') {
+      return reply(sock, jid, 'Reply YES to submit or CANCEL.');
+    }
 
     const { data, error } = await supabase
       .from('bookings')
-      .select('*')
-      .eq('source', 'website')
-      .eq('whatsapp_sent', false)
-      .eq('status', 'pending');
+      .insert({
+        phone: phoneFromJid(jid),
+        customer_name: u.name,
+        pickup: u.pickup,
+        destination: u.destination,
+        city: u.city,
+        distance_km: u.km,
+        min_price: u.prices.minimum,
+        max_price: u.prices.maximum,
+        status: 'open'
+      })
+      .select('id')
+      .single();
+
+    if (error || !data) {
+      console.log('Supabase booking error:', error?.message);
+
+      return reply(
+        sock,
+        jid,
+        'Sorry, we could not submit your booking. Please try again.'
+      );
+    }
+
+    u.bookingId = data.id;
+    u.step = 'waiting_bids';
+    u.bidStartedAt = Date.now();
+    u.offers = [];
+
+    await reply(
+      sock,
+      jid,
+      `✅ REQUEST SUBMITTED!
+
+Booking reference: ${data.id}
+
+Your request is now available to drivers.
+
+We will send you up to 7 driver offers here on WhatsApp.
+
+Please wait up to ${BID_WINDOW_SECONDS} seconds.`
+    );
+
+    await notifyOwner(
+      sock,
+      `🚕 NEW BOOKING
+
+Reference: ${data.id}
+Name: ${u.name}
+Phone: ${phoneFromJid(jid)}
+Pickup: ${u.pickup}
+Destination: ${u.destination}
+Distance: ${u.km}km
+Minimum: ${money(u.prices.minimum)}
+Maximum: ${money(u.prices.maximum)}`
+    );
+
+    return;
+  }
+
+  if (u.step === 'waiting_bids') {
+    return reply(
+      sock,
+      jid,
+      'We are collecting driver offers. Please wait.'
+    );
+  }
+
+  if (u.step === 'choose_driver') {
+    const choice = Number(text);
+
+    if (
+      !Number.isInteger(choice) ||
+      choice < 1 ||
+      choice > u.offers.length
+    ) {
+      return reply(
+        sock,
+        jid,
+        `Please select a number from 1 to ${u.offers.length}.`
+      );
+    }
+
+    const selected = u.offers[choice - 1];
+
+    const { data: booking, error: readError } = await supabase
+      .from('bookings')
+      .select('id,status')
+      .eq('id', u.bookingId)
+      .single();
+
+    if (readError || !booking || booking.status !== 'bidding') {
+      return reply(sock, jid, 'This booking is no longer available. Please contact support.');
+    }
+
+    const { data: updated, error } = await supabase
+      .from('bookings')
+      .update({
+        status: 'driver_selected',
+        selected_bid_id: selected.id,
+        selected_driver_id: selected.driver_id
+      })
+      .eq('id', u.bookingId)
+      .eq('status', 'bidding')
+      .select('id');
+
+    if (error || !updated?.length) {
+      return reply(sock, jid, 'This booking could not be selected. Please contact support.');
+    }
+
+    const customerPhone = phoneFromJid(jid);
+
+    try {
+      await sock.sendMessage(
+        String(selected.driver_phone).replace(/\D/g, '') + '@s.whatsapp.net',
+        {
+          text: `🚕 RIDE OFFER SELECTED
+
+Booking: ${u.bookingId}
+
+Customer: ${u.name}
+Customer phone: ${customerPhone}
+
+Pickup: ${u.pickup}
+Destination: ${u.destination}
+City: ${u.city}
+Distance: ${u.km} km
+
+Your bid: ${money(selected.price)}
+
+Reply ACCEPT to accept or DECLINE to reject.`
+        }
+      );
+    } catch (error) {
+      console.log('Driver notification error:', error.message);
+      return reply(sock, jid, 'Driver notification failed. Support has been alerted.');
+    }
+
+    u.step = 'awaiting_driver';
+
+    await reply(
+      sock,
+      jid,
+      `✅ You selected ${selected.driver_name} for ${money(selected.price)}.
+
+The driver has received your ride details. We are waiting for confirmation.`
+    );
+
+    await notifyOwner(
+      sock,
+      `DRIVER SELECTED
+
+Booking: ${u.bookingId}
+Driver: ${selected.driver_name}
+Price: ${money(selected.price)}
+Customer: ${customerPhone}`
+    );
+
+    return;
+  }
+
+  if (u.step === 'awaiting_driver') {
+    return reply(sock, jid, 'Your selected driver has received the request. We are waiting for confirmation.');
+  }
+}
+
+// COLLECT THE FIRST 7 VALID DRIVER BIDS
+async function checkDriverBids(sock) {
+  for (const [jid, u] of users.entries()) {
+    if (u.step !== 'waiting_bids') continue;
+
+    const { data: bids, error } = await supabase
+      .from('driver_bids')
+      .select('id,booking_id,driver_id,driver_name,driver_phone,price,created_at')
+      .eq('booking_id', u.bookingId)
+      .eq('status', 'submitted')
+      .order('created_at', { ascending: true })
+      .limit(7);
 
     if (error) {
-
-      console.log('Website booking query error:', error.message);
-
-      return;
+      console.log('Bid lookup error:', error.message);
+      continue;
     }
 
-    if (!data || data.length === 0) return;
+    const validBids = (bids || []).filter(b =>
+      b.driver_name &&
+      b.driver_phone &&
+      Number.isFinite(Number(b.price)) &&
+      Number(b.price) > 0
+    );
 
-    for (const booking of data) {
+    const elapsed = Date.now() - u.bidStartedAt;
 
-      const adminMessage =
-        `🌐 *NEW WEBSITE BOOKING*
+    if (
+      validBids.length >= 7 ||
+      (elapsed >= BID_WINDOW_SECONDS * 1000 && validBids.length > 0)
+    ) {
+      if (offeredBookings.has(u.bookingId)) continue;
 
-Booking ID: ${booking.id}
+      offeredBookings.add(u.bookingId);
 
-Customer: ${booking.customer_name}
+      u.offers = validBids.slice(0, 7);
+      u.step = 'choose_driver';
 
-Phone: ${booking.phone}
+      await supabase
+        .from('bookings')
+        .update({ status: 'bidding' })
+        .eq('id', u.bookingId)
+        .eq('status', 'open');
 
-Pickup: ${booking.pickup}
+      const list = u.offers.map((b, i) =>
+        `${i + 1}. ${b.driver_name} — ${money(b.price)}`
+      ).join('\n');
 
-Destination: ${booking.destination}
+      await reply(
+        sock,
+        jid,
+        `🚘 DRIVER OFFERS
 
-City: ${booking.city}
+${list}
 
-Distance: ${booking.distance_km} km
+Reply with the number of your preferred driver.
 
-Price: $${booking.price}
-
-Status: Pending`;
-
-      const customerMessage =
-        `✅ *MY CHAUFFEUR ZIM*
-
-Your booking has been received!
-
-Booking ID: ${booking.id}
-
-${booking.pickup} → ${booking.destination}
-
-Distance: ${booking.distance_km} km
-
-Total: $${booking.price}
-
-A driver will contact you shortly.
-
-Thank you for choosing us! 🚕`;
-
-      const adminSent = await send(
-        BOT_NUMBER,
-        adminMessage
+Your phone number and booking details will only be sent to the driver you select.`
       );
+    }
 
-      const customerSent = await send(
-        booking.phone,
-        customerMessage
+    if (elapsed >= BID_WINDOW_SECONDS * 1000 && validBids.length === 0) {
+      await supabase
+        .from('bookings')
+        .update({ status: 'no_bids' })
+        .eq('id', u.bookingId)
+        .eq('status', 'open');
+
+      users.set(jid, { step: 'menu' });
+
+      await reply(
+        sock,
+        jid,
+        'Sorry, no drivers submitted an offer. Please try again later.'
       );
+    }
+  }
+}
 
-      if (adminSent && customerSent) {
+// WHATSAPP CONNECTION
+async function startBot() {
+  if (!fs.existsSync(AUTH_DIR)) {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+  }
 
-        const { error: updateError } = await supabase
-          .from('bookings')
-          .update({ whatsapp_sent: true })
-          .eq('id', booking.id);
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-        if (updateError) {
-          console.log(
-            'Booking notification update error:',
-            updateError.message
-          );
-        } else {
-          console.log(
-            'Website booking notifications sent:',
-            booking.id
-          );
-        }
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+    browser: ['My Chauffeur Zim', 'Chrome', '2.0.0'],
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000
+  });
 
-      } else {
+  sock.ev.on('creds.update', saveCreds);
 
-        console.log(
-          'Website notification incomplete:',
-          booking.id
+  if (!sock.authState.creds.registered) {
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(PHONE_NUMBER);
+        console.log('MY CHAUFFEUR ZIM PAIRING CODE:', code);
+      } catch (error) {
+        console.log('Pairing error:', error.message);
+      }
+    }, 5000);
+  }
+
+  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+    if (connection === 'open') {
+      console.log('✅ My Chauffeur Zim is ONLINE');
+
+      setInterval(() => {
+        checkDriverBids(sock).catch(error =>
+          console.log('Bid polling error:', error.message)
         );
+      }, 5000);
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect =
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+
+      console.log('WhatsApp disconnected. Reconnect:', shouldReconnect);
+
+      if (shouldReconnect) {
+        setTimeout(startBot, 5000);
       }
     }
-
-  } catch (e) {
-
-    console.log('Website booking checker error:', e.message);
-  }
-}
-
-// ============================================
-// RAILWAY HEALTH CHECK SERVER
-// ============================================
-
-const server = http.createServer((req, res) => {
-
-  res.writeHead(200, {
-    'Content-Type': 'text/plain'
   });
 
-  res.end(
-    'My Chauffeur Zim Bot Alive - ' +
-    new Date().toISOString()
-  );
-});
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
 
-server.listen(PORT, '0.0.0.0', () => {
-
-  console.log('Health server listening on port:', PORT);
-});
-
-// ============================================
-// GRACEFUL SHUTDOWN
-// ============================================
-
-function shutdown(signal) {
-
-  console.log(signal, 'received. Shutting down safely.');
-
-  stopHeartbeat();
-
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-  }
-
-  try {
-    if (sock) {
-      sock.end(new Error('Application shutting down'));
+    for (const msg of messages) {
+      try {
+        await handleMessage(sock, msg);
+      } catch (error) {
+        console.log('Message error:', error.message);
+      }
     }
-  } catch (e) {
-    console.log('Socket shutdown:', e.message);
-  }
-
-  server.close(() => {
-    process.exit(0);
   });
-
-  setTimeout(() => process.exit(1), 10000)
-    .unref();
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+console.log('Starting My Chauffeur Zim...');
 
-process.on('uncaughtException', (error) => {
-
-  console.error('UNCAUGHT EXCEPTION:', error);
-
-  // Let Railway restart an unstable process
+startBot().catch(error => {
+  console.error('Startup error:', error);
   process.exit(1);
 });
-
-process.on('unhandledRejection', (error) => {
-
-  console.error('UNHANDLED REJECTION:', error);
-});
-
-// ============================================
-// START APPLICATION
-// ============================================
-
-console.log('');
-console.log('🚕 Starting My Chauffeur Zim...');
-console.log('WhatsApp number:', BOT_NUMBER);
-console.log('Supabase:', supabase ? 'Configured' : 'Missing');
-console.log('');
-
-start();
-
-// Watchdog
-setInterval(() => {
-
-  if (!sock && !isStarting && !loggedOut && !reconnectTimer) {
-
-    console.log('Watchdog: restarting missing socket');
-
-    safeRestart();
-  }
-
-}, 60000);
