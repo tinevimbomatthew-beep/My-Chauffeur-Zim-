@@ -2,7 +2,7 @@ global.WebSocket = require('ws');
 process.on('uncaughtException', e => console.log('Kept alive:', e.message));
 process.on('unhandledRejection', e => console.log('Kept alive:', e?.message || e));
 
-const { state, saveCreds } = await useMultiFileAuthState('auth_baileys_v2');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const pino = require('pino');
 const http = require('http');
@@ -12,9 +12,9 @@ const OWNER_NUMBER = String(process.env.OWNER_NUMBER || '').replace(/[^0-9]/g, '
 const PHONE_NUMBER = String(process.env.PHONE_NUMBER || '').replace(/[^0-9]/g, '');
 const BID_WINDOW_SECONDS = Number(process.env.BID_WINDOW_SECONDS || 90);
 
-const users = new Map(); // jid -> { step, pickup, destination, city, name, bookingId, offers, bidStartedAt }
+const users = new Map();
 const offeredBookings = new Set();
-let sock = null, isStarting = false, pairingRequested = false, lastPairingAt = 0, bidInterval = null;
+let sock = null, isStarting = false, pairingRequested = false, bidInterval = null;
 
 const money = a => '$' + Number(a).toFixed(2);
 
@@ -43,8 +43,6 @@ async function reply(jid, text) {
   try { await sock.sendMessage(jid, { text }); } catch (e) { console.log('Reply error:', e.message); }
 }
 
-// --- DRIVER BIDS COME FROM WEBSITE ---
-// Drivers set price on website -> saved to driver_bids table -> bot polls and shows to customer
 async function checkDriverBids() {
   if (!sock) return;
   for (const [jid, u] of users.entries()) {
@@ -56,11 +54,8 @@ async function checkDriverBids() {
       .order('created_at', { ascending: true })
       .limit(7);
     if (error) { console.log('Bid lookup:', error.message); continue; }
-
     const valid = (bids || []).filter(b => b.driver_name && b.driver_phone && Number.isFinite(Number(b.price)) && Number(b.price) > 0);
     const elapsed = Date.now() - u.bidStartedAt;
-
-    // Show offers when we have 7 OR when window ends and we have at least 1
     if (valid.length >= 7 || (elapsed >= BID_WINDOW_SECONDS * 1000 && valid.length > 0)) {
       if (offeredBookings.has(u.bookingId)) continue;
       offeredBookings.add(u.bookingId);
@@ -88,14 +83,7 @@ async function handleMessage(msg) {
   const text = body.toLowerCase();
   const phone = jid.split('@')[0].split(':')[0];
 
-  // --- DRIVER ACCEPT / DECLINE (driver replies on WhatsApp) ---
   if (text === 'accept' || text === 'decline') {
-    const { data: b } = await supabase.from('bookings').select('*').eq('status', 'driver_selected').order('created_at', { ascending: false }).limit(5);
-    const booking = (b || []).find(x => {
-      // find booking where this driver was selected - check via driver_bids
-      return true; // we check below via bid
-    });
-    // Lookup via driver_bids to be safe
     const { data: bid } = await supabase.from('driver_bids').select('booking_id,driver_phone').eq('driver_phone', phone).order('created_at', { ascending: false }).limit(1).single();
     if (!bid) return reply(jid, 'No pending ride found for you.');
     const { data: bk } = await supabase.from('bookings').select('*').eq('id', bid.booking_id).eq('status', 'driver_selected').single();
@@ -132,12 +120,7 @@ async function handleMessage(msg) {
 
   if (u.step === 'pickup') { u.pickup = body; u.step = 'destination'; save(); return reply(jid, `Pickup: ${u.pickup}\n\nWhere are you going to? Send your destination.`); }
   if (u.step === 'destination') { u.destination = body; u.step = 'city'; save(); return reply(jid, `From: ${u.pickup}\nTo: ${u.destination}\n\nWhich city is this trip in? e.g. Harare, Bulawayo, Mutare`); }
-
-  // NO DISTANCE CALC ANYMORE - just city, then name
-  if (u.step === 'city') {
-    u.city = body; u.step = 'name'; save();
-    return reply(jid, `City: ${u.city}\n\nWhat is your name?`);
-  }
+  if (u.step === 'city') { u.city = body; u.step = 'name'; save(); return reply(jid, `City: ${u.city}\n\nWhat is your name?`); }
 
   if (u.step === 'name') {
     u.name = body; u.step = 'review'; save();
@@ -146,7 +129,6 @@ async function handleMessage(msg) {
 
   if (u.step === 'review') {
     if (text !== 'yes') return reply(jid, 'Reply YES to submit or CANCEL.');
-    // Create booking WITHOUT price - price comes from driver bids on website
     const { data, error } = await supabase.from('bookings').insert([{
       phone, customer_name: u.name, pickup: u.pickup, destination: u.destination, city: u.city,
       status: 'open', source: 'whatsapp'
@@ -182,27 +164,33 @@ async function handleMessage(msg) {
 async function startBot() {
   if (isStarting) return; isStarting = true;
   try {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
+    const { state, saveCreds } = await useMultiFileAuthState('auth_baileys_v2');
     sock = makeWASocket({ auth: state, printQRInTerminal: false, logger: pino({ level: 'silent' }), browser: ['My Chauffeur Zim', 'Chrome', '1.0.0'], connectTimeoutMs: 60000, keepAliveIntervalMs: 25000, syncFullHistory: false });
     sock.ev.on('creds.update', saveCreds);
     isStarting = false;
 
+    // AUTO-REFRESH PAIRING CODE EVERY 15s
     if (!state.creds.registered && !pairingRequested) {
-      if (Date.now() - lastPairingAt < 5 * 60 * 1000) console.log('Pairing cooldown');
-      else {
-        pairingRequested = true; lastPairingAt = Date.now();
-        setTimeout(async () => {
-          try {
-            console.log('Pairing for number:', PHONE_NUMBER);
-            const code = await sock.requestPairingCode(PHONE_NUMBER);
-            console.log('====================================');
-            console.log('YOUR PAIRING CODE IS:', code);
-            console.log('ENTER THIS CODE NOW - 20 SECONDS');
-            console.log('====================================');
-          } catch (e) { console.log('Pairing error:', e.message); }
-          setTimeout(() => pairingRequested = false, 60000);
-        }, 5000);
-      }
+      pairingRequested = true;
+      let attempts = 0;
+      const askForCode = async () => {
+        if (state.creds.registered) return;
+        if (attempts >= 12) { console.log('Stopped auto codes after 3 mins. Restart for more.'); pairingRequested = false; return; }
+        attempts++;
+        try {
+          console.log(`Pairing for number: ${PHONE_NUMBER} - Attempt ${attempts}/12`);
+          const code = await sock.requestPairingCode(PHONE_NUMBER);
+          console.log('====================================');
+          console.log(`YOUR PAIRING CODE IS: ${code} <- USE THIS ONE`);
+          console.log('Next fresh code in 15 seconds if you miss this one...');
+          console.log('====================================');
+        } catch (e) {
+          console.log('Pairing error:', e.message);
+          if (e.message.includes('405')) { console.log('Rate limited - waiting 5 mins'); setTimeout(() => { pairingRequested = false; }, 5 * 60 * 1000); return; }
+        }
+        setTimeout(askForCode, 15000);
+      };
+      setTimeout(askForCode, 5000);
     }
 
     sock.ev.on('connection.update', (update) => {
@@ -215,8 +203,7 @@ async function startBot() {
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
         console.log('Connection closed, code:', code, 'reconnecting');
-        if (code === 405) { console.log('405 - sleeping 10 mins'); setTimeout(() => { isStarting = false; startBot(); }, 10 * 60 * 1000); return; }
-        if (code === DisconnectReason.loggedOut) { console.log('Logged out - delete auth volume to re-pair'); return; }
+        if (code === DisconnectReason.loggedOut || code === 401) { console.log('Logged out - change auth folder name to _v3 and redeploy to re-pair'); return; }
         setTimeout(() => { isStarting = false; startBot(); }, 5000);
       }
     });
