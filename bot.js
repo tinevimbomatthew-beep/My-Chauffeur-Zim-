@@ -2,9 +2,9 @@
 process.on('uncaughtException', e => console.log('⚠️ Kept alive:', e.message));
 process.on('unhandledRejection', e => console.log('⚠️ Kept alive:', e?.message || e));
 global.WebSocket = require('ws');
-
+const { createClient } = require('@supabase/supabase-js') 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY);
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY |
 const pino = require('pino');
 const fs = require('fs');
 const http = require('http');
